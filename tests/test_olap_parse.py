@@ -245,22 +245,60 @@ def test_fetch_grid_raises_when_a_later_page_returns_zero_body_rows():
     assert "2페이지" in str(exc_info.value)
 
 
-def test_fetch_grid_raises_when_accumulated_count_disagrees_with_pager_implied_total():
-    """세 페이지 각각은 페이지 크기 규칙을 지키는데(50/50/23), 2페이지 첫 행이
-    1페이지 행과 내용이 우연히 같아 중복 판정으로 사라진다 — 페이저가 암시하는
-    총합(123)과 실제 누적 고유 행(122)이 어긋나므로 조용히 넘어가지 않고 예외를
-    내야 한다."""
+# ---------------------------------------------------------------------------
+# Task 7b Fix round 1 (R12) — 라이브 검증(6페이지, 원시 267 vs 고유 262)이
+# 밝힌 것: 경계당 반복 헤더 행 하나는 DevExtreme PivotGrid 의 정상 동작이다.
+# "원시==고유" 엄격한 동등성 대신 "중복 <= 경계 수(pager_count-1)" 상한으로
+# 검증한다.
+# ---------------------------------------------------------------------------
+
+def test_fetch_grid_returns_distinct_rows_when_each_page_repeats_one_header_row():
+    """경계마다 그룹 헤더 행이 한 번씩 반복되는 정상 상황(2경계 x 중복 1개씩
+    =2, 페이지 3개 → 허용 상한 2와 정확히 같음)에서는 실패하지 않고 고유 행만
+    돌려줘야 한다."""
     page1 = [[f"row{i}", str(i)] for i in range(50)]
-    page2 = [["row0", "0"]] + [[f"row{i}", str(i)] for i in range(50, 99)]
-    page3 = [[f"row{i}", str(i)] for i in range(99, 122)]
+    page2 = [["row0", "0"]] + [[f"row{i}", str(i)] for i in range(50, 99)]      # 경계1 중복 1개
+    page3 = [["row50", "50"]] + [[f"row{i}", str(i)] for i in range(99, 121)]   # 경계2 중복 1개
+    page = _FakePage(windows=[page1, page2, page3], pager_count=3)
+
+    rows = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+
+    header, *body = rows
+    assert len(body) == 121  # 원시 50+50+23=123 - 중복 2개
+    assert len({r[0] for r in body}) == 121  # 전부 고유
+
+
+def test_fetch_grid_raises_when_a_page_contributes_no_new_rows_even_if_reordered():
+    """이전 페이지와 완전히 똑같은 리스트는 아니어도(순서만 다름) 새 행을
+    하나도 못 보태면 "안 넘어간 것"과 똑같이 취급해 실패해야 한다 — 이전
+    페이지와의 리스트 동등성(body == prev_body)만으로는 못 잡는 경우다."""
+    page1 = [["a", "1"], ["b", "2"]]
+    page2 = [["b", "2"], ["a", "1"]]  # 순서만 바뀜 — body != prev_body 지만 새 행 0개
+    page = _FakePage(windows=[page1, page2], pager_count=2)
+
+    with pytest.raises(olap.OlapPaginationError) as exc_info:
+        olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+
+    assert "새 행을 하나도 보태지" in str(exc_info.value)
+
+
+def test_fetch_grid_raises_when_duplicate_count_exceeds_page_boundaries():
+    """중복 3개인데 경계는 2개뿐(페이지 3개)이면 "경계당 반복 헤더 1개"로 설명이
+    안 된다 — 원인 모를 손실/중복으로 보고 여전히 시끄럽게 실패해야 한다."""
+    page1 = [[f"row{i}", str(i)] for i in range(50)]
+    page2 = (
+        [["row0", "0"], ["row1", "1"]]
+        + [[f"row{i}", str(i)] for i in range(50, 98)]
+    )  # 경계1 중복 2개
+    page3 = [["row50", "50"]] + [[f"row{i}", str(i)] for i in range(98, 120)]  # 경계2 중복 1개
     page = _FakePage(windows=[page1, page2, page3], pager_count=3)
 
     with pytest.raises(olap.OlapPaginationError) as exc_info:
         olap.fetch_grid("http://fake", page=page, max_scrolls=10)
 
     msg = str(exc_info.value)
-    assert "123" in msg
-    assert "122" in msg
+    assert "3" in msg  # 실제 중복 개수
+    assert "2" in msg  # 허용 상한 (pager_count - 1)
 
 
 def test_fetch_grid_raises_when_a_non_last_page_is_short():

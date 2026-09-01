@@ -29,11 +29,20 @@ Task 7b (2026-09-01): 그 후속 작업 — 페이지네이션 누적을 구현�
   2개 이상이면 더 이상 즉시 실패하지 않는다. 대신 1페이지째는 이미 읽어둔 채로
   `.dx-datagrid-pager .dx-page` 버튼을 2페이지부터 순서대로 클릭해 걷는다
   (`_walk_paginated_grid`). 실패는 여전히 시끄럽다 — 페이지 클릭이 행을 못
-  바꾸면(`OlapPageWalkError`), 어느 페이지가 데이터 행을 하나도 안 주면
-  (`OlapExtractionError`), 마지막이 아닌 페이지가 `_PAGE_SIZE` 와 다르면, 또는
-  다 걷은 뒤 고유 행 총수가 페이저가 암시하는 총합과 안 맞으면 모두
+  바꾸면, 어느 페이지가 새 행을 하나도 못 보태면, 어느 페이지가 데이터 행을
+  하나도 안 주면(`OlapExtractionError`), 마지막이 아닌 페이지가 `_PAGE_SIZE`
+  와 다르면, 또는 중복 행 수가 페이지 경계 수(pager_count-1)를 넘으면 모두
   `OlapPageWalkError` 를 낸다. 잘린 그리드를 반환하는 대신 예외를 낸다는 원칙은
   그대로다.
+
+Task 7b Fix round 1 (2026-09-01, 컨트롤러 R12): 처음엔 "원시 합계 == 고유 행
+  수"라는 엄격한 동등성으로 완전성을 검증했는데, 라이브 사이트 실측(6페이지,
+  원시 267행 vs 고유 262행)이 이 체크가 실데이터에서 절대 통과 못 함을
+  보였다 — 그룹이 페이지 경계에 걸치면 DevExtreme PivotGrid 가 그 그룹의
+  헤더 행을 다음 페이지 맨 위에 다시 그린다(경계당 정확히 1개, 5경계=5중복
+  이 정확히 들어맞았다). 이건 데이터 손실이 아니라 정상 렌더링이다. 그래서
+  동등성 대신 "중복 <= 경계 수(pager_count-1)" 상한으로 바꿨다 — 경계당
+  중복 최대 1개는 정상, 그 이상은 원인 불명의 손실/중복으로 여전히 실패한다.
 """
 from __future__ import annotations
 
@@ -146,10 +155,22 @@ def _walk_paginated_grid(
                 f"{_PAGER_SELECTOR} 클릭이 페이지를 못 넘겼을 수 있다."
             )
 
-        page_sizes.append(len(body))
+        before = len(seen)
         for row in body:
             if row:
                 seen["".join(row)] = row
+        if len(seen) == before:
+            # body != prev_body(위에서 이미 확인) 인데도 새 행이 하나도 안
+            # 보태졌다 — 인접 페이지와 똑같지는 않지만(예: 순서만 바뀌었거나
+            # 더 이전 페이지와 겹침) 실질적으로 아무 진전이 없었다는 뜻이라
+            # 똑같이 "막혔다"고 본다.
+            raise OlapPageWalkError(
+                f"{page_number}페이지가 새 행을 하나도 보태지 못했다 (본문 "
+                f"{len(body)}행 모두 이미 본 행이다) — 페이지가 실제로는 "
+                "안 넘어갔거나 다른 페이지와 겹칠 수 있다."
+            )
+
+        page_sizes.append(len(body))
         prev_body = body
 
     for i, size in enumerate(page_sizes[:-1], start=1):
@@ -160,13 +181,25 @@ def _walk_paginated_grid(
                 "수 있다."
             )
 
-    implied_total = (pager_count - 1) * _PAGE_SIZE + page_sizes[-1]
-    if len(seen) != implied_total:
+    # Task 7b Fix round 1 (컨트롤러 지시 R12): "원시 합계 == 고유 행 수" 라는
+    # 엄격한 동등성 체크는 실데이터에서 항상 걸린다 — 실측(라이브 사이트,
+    # (지역별)시군구 단독 배치, 페이지 6개): 원시 267행, 고유 262행, 딱
+    # 5개(=경계 수 5 = 페이지 수 6 - 1) 차이가 났다. DevExtreme PivotGrid 는
+    # 그룹이 페이지 경계에 걸치면 그 그룹의 헤더 행을 다음 페이지 맨 위에
+    # 다시 그린다 — 경계당 반복 헤더 행 하나는 정상 동작이다. 그래서
+    # "중복이 0이어야 한다"가 아니라 "중복이 페이지 경계 수(pager_count - 1)
+    # 를 넘으면 안 된다"는 상한으로 검증한다. 경계 수보다 많은 중복은 반복
+    # 헤더만으로 설명되지 않으므로 원인 불명의 손실/중복으로 보고 여전히
+    # 시끄럽게 실패한다.
+    total_raw = sum(page_sizes)
+    duplicates = total_raw - len(seen)
+    max_allowed_duplicates = pager_count - 1  # 경계 수 = 페이지 수 - 1
+    if duplicates > max_allowed_duplicates:
         raise OlapPageWalkError(
-            f"누적 고유 행 수({len(seen)})가 페이저가 암시하는 총합"
-            f"({implied_total} = 페이지 {pager_count}개 중 {pager_count - 1}개 x "
-            f"{_PAGE_SIZE}행 + 마지막 페이지 {page_sizes[-1]}행)과 다르다 — "
-            "일부 행이 중복 판정으로 소실됐거나 페이지가 잘못 넘어갔을 수 있다."
+            f"누적 고유 행 수({len(seen)})와 원시 합계({total_raw}) 사이의 "
+            f"중복({duplicates}개)이 페이지 경계 수({max_allowed_duplicates} = "
+            f"페이지 {pager_count}개 - 1)를 넘는다 — 경계당 반복 헤더 행 "
+            "하나는 정상이지만 그 이상은 원인을 모르는 손실/중복일 수 있다."
         )
 
     return [header, *seen.values()]
