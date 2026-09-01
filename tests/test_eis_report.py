@@ -28,3 +28,25 @@ def test_every_report_key_has_a_menu_id():
     for key in ["유효구인구직", "취업건수", "피보험자", "경력직이동"]:
         assert key in eis_report.REPORTS
         assert eis_report.REPORTS[key].isdigit()
+
+
+def test_double_quoted_value_variant_parses():
+    """EIS 가 따옴표 스타일을 바꿔도(단따옴표 id / 겹따옴표 value) 깨지지 않는다."""
+    html = (
+        "<input type=\"hidden\" id='reptIdUrl' name=\"reptIdUrl\" "
+        "value=\"https://eis.work24.go.kr/olap/report/viewer.do?USER=abc"
+        "&amp;reportId=ABC&amp;closYm=202607\" />"
+    )
+    url = eis_report.viewer_url("020010020", get=lambda u, **k: FakeResponse(html))
+    assert "reportId=ABC" in url
+    assert "&amp;" not in url
+
+
+def test_sibling_reptIdUrlOpen_is_not_matched():
+    """reptIdUrlOpen 만 있고 reptIdUrl 이 없으면 오매치하지 않고 에러를 낸다."""
+    html = (
+        "<input type=\"hidden\" id=\"reptIdUrlOpen\" name=\"reptIdUrlOpen\" "
+        "value='https://eis.work24.go.kr/olap/report/viewer.do?reportId=SHOULD_NOT_MATCH' />"
+    )
+    with pytest.raises(eis_report.EisReportError):
+        eis_report.viewer_url("020010020", get=lambda u, **k: FakeResponse(html))

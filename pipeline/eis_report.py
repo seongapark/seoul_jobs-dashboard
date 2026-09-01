@@ -19,7 +19,7 @@ _CONFIG = json.loads((Path(__file__).resolve().parents[1] / "config/olap.json")
                      .read_text(encoding="utf-8"))
 REPORTS: dict[str, str] = _CONFIG["reports"]
 
-_PATTERN = re.compile(r"id=\"reptIdUrl\"[^>]*value='([^']+)'")
+_PATTERN = re.compile(r"""id=["']reptIdUrl["'][^>]*?value=(["'])(.*?)\1""", re.S)
 
 
 class EisReportError(RuntimeError):
@@ -31,4 +31,4 @@ def viewer_url(menu_id: str, *, get=requests.get) -> str:
     found = _PATTERN.search(page)
     if not found:
         raise EisReportError(f"menuId={menu_id} 페이지에 reptIdUrl 이 없다 — 화면 개편 의심")
-    return html_mod.unescape(found.group(1))
+    return html_mod.unescape(found.group(2))
