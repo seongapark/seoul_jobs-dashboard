@@ -44,3 +44,45 @@ def test_unknown_code_raises():
     cm = center_map.load(MAP)
     with pytest.raises(KeyError):
         cm.center_of("48170")  # 경남 통영시
+
+
+def test_double_assignment_guard_fires(tmp_path):
+    """load() 중에 이중배정을 감지하고 ValueError를 발생시킨다.
+
+    같은 시군구 코드가 두 센터 아래 나타나면 load() 시점에 감지해야 한다.
+    validate() 만으로는 부족하다 — 코드 스왑이나 타입으로 총 개수는 맞아도
+    이중배정은 감지할 수 없다.
+    """
+    # 이중배정된 임시 매핑 파일 생성
+    dup_mapping = {
+        "version": "test",
+        "기준": "test",
+        "규칙": [],
+        "센터": [
+            {
+                "센터": "센터A",
+                "시도": "서울",
+                "시군구": [
+                    {"code": "11680", "name": "강남구"}
+                ]
+            },
+            {
+                "센터": "센터B",
+                "시도": "경기",
+                "시군구": [
+                    {"code": "11680", "name": "강남구"}  # 동일한 코드
+                ]
+            }
+        ]
+    }
+
+    import json
+    tmp_file = tmp_path / "dup_map.json"
+    tmp_file.write_text(json.dumps(dup_mapping), encoding="utf-8")
+
+    # load() 호출 시 이중배정 감지 및 ValueError 발생
+    with pytest.raises(ValueError) as exc_info:
+        center_map.load(tmp_file)
+
+    # 에러 메시지에 문제의 코드가 포함되어야 함
+    assert "11680" in str(exc_info.value)
