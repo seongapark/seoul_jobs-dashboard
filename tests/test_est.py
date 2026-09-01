@@ -1,4 +1,5 @@
 import pytest
+from pipeline import eis
 from pipeline import est
 
 
@@ -46,6 +47,30 @@ def test_collect_shapes_rows():
     values = {r["occupation"]: r["value"] for r in matches}
     assert values == {"": 109560, "0": 31049, "02": 26828}
     assert all(r["period"] == "202601" for r in matches)
+
+
+def test_sido_object_codes_map_to_the_administrative_standard_code_eis_uses():
+    """Task 7b (R9): KOSIS 요청 코드(est.SIDO_CODE 의 15118REG2012_* 접미사)는
+    KOSIS 자체 시도 코드 체계다 — 인천은 "23", 경기는 "31" 이다. 그런데 EIS
+    행은 행정표준코드(서울 11, 인천 28, 경기 41)를 쓴다. 두 표를 join 하려면
+    est 가 내보내는 "sido" 값도 행정표준코드여야 한다 — KOSIS 자체 코드를 그대로
+    돌려주면(이전 버그: "23"->"23", "31"->"31") 화면의 sido 필터가 안 맞는다."""
+    assert est.SIDO == {"00": "00", "11": "11", "23": "28", "31": "41"}
+    # KOSIS 요청 코드(SIDO_CODE) 자체는 바뀌면 안 된다 — obj_l1 로 그대로 나간다.
+    assert est.SIDO_CODE == {
+        "00": "15118REG2012_00", "11": "15118REG2012_11",
+        "23": "15118REG2012_23", "31": "15118REG2012_31",
+    }
+
+
+def test_est_and_eis_agree_on_the_three_metro_sido_codes():
+    """est(KOSIS)와 eis(행 데이터) 두 수집기가 서로 다른 행정표준코드를 내보내면
+    화면에서 sido 로 join/필터할 때 조용히 어긋난다 — 이 테스트가 그 드리프트를
+    영구히 막는다."""
+    assert est.SIDO["11"] == eis._SIDO_NAME_TO_CODE["서울"] == "11"
+    assert est.SIDO["23"] == eis._SIDO_NAME_TO_CODE["인천"] == "28"
+    assert est.SIDO["31"] == eis._SIDO_NAME_TO_CODE["경기"] == "41"
+    assert est.SIDO["00"] == eis._SIDO_NAME_TO_CODE["전국"] == "00"
 
 
 def test_value_strips_commas_and_handles_blank():
