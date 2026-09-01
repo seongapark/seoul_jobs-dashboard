@@ -1,0 +1,119 @@
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: 'IBM Plex Sans KR', 'Malgun Gothic', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+button { font-family: inherit; font-size: inherit; color: inherit; }
+
+a { color: var(--link); text-decoration: none; }
+a:hover { color: var(--link-hover); }
+
+.num {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* App shell */
+
+.app {
+  max-width: 480px;
+  margin: 0 auto;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 10px 16px;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+}
+
+.header__home {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin-right: 8px;
+  color: var(--text-secondary);
+  flex: none;
+}
+
+.header__title {
+  font-size: 17px;
+  font-weight: 700;
+  margin-right: auto;
+}
+
+.header__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.offline-banner {
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  padding: 6px 16px;
+  color: var(--warn-fg);
+  background: var(--warn-bg);
+}
+
+.offline-banner[hidden] { display: none; }
+
+.screen {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.notice {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 4px 16px;
+}
+
+/* Card */
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  min-height: 44px;
+}
+
+/* Badge */
+
+.badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+/* Delta (revision indicator) */
+
+.delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.delta-up { color: var(--up); }
+.delta-down { color: var(--down); }
+.delta-flat { color: var(--text-muted); }

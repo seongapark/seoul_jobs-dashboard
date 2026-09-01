@@ -1,0 +1,31 @@
+:root {
+  color-scheme: light;
+
+  --bg: #eef0f3;
+  --card: #ffffff;
+  --border: #e2e5ea;
+  --text: #191d24;
+  --text-secondary: #667085;
+  --text-muted: #98a2b3;
+  --accent: #23508f;
+  --accent-light: #e7edf6;
+  --link: #23508f;
+  --link-hover: #1a3c6e;
+  --up: #c73e3a;
+  --down: #2f6bd0;
+  --warn-fg: #9a6b15;
+  --warn-bg: #faf0dc;
+
+  /* 자료 색 — 아카이브 --src-* 체계를 잇는다 */
+  --c-jo: #1baf7a;      /* 유효구인 · 피보험자 */
+  --c-jh: #2a78d6;      /* 유효구직 · 경력직 이동 */
+  --src-est: #eb6834;   /* 직종별사업체노동력조사 */
+  --c-jo-bg: #e6f6f0;
+  --c-jh-bg: #e6effa;
+  --src-est-bg: #fdeee8;
+
+  /* 지도 램프 */
+  --s1:#e6f6f0; --s2:#b6e6d3; --s3:#7ed4b3; --s4:#45c194; --s5:#1baf7a;
+  --g1:#e6effa; --g2:#c2d8f4; --g3:#8fb6ea; --g4:#5a97e0; --g5:#2a78d6;
+  --i1:#f6e9f2; --i2:#e6c6dd; --i3:#d29ec3; --i4:#c473a9; --i5:#b5478f;
+}

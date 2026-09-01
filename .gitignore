@@ -1,0 +1,6 @@
+__pycache__/
+.pytest_cache/
+.env
+data/raw/*.csv
+!data/raw/.gitkeep
+.superpowers/
