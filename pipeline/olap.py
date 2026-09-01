@@ -27,7 +27,15 @@ Task 7 Step 0 탐침 추가 (2026-09-01, tools/probe_flat_sigungu.py 등):
 """
 from __future__ import annotations
 
-_PAGER_SELECTOR = ".dx-datagrid-pager .dx-page"
+# 실측: EIS 데이터그리드 페이저의 페이지당 행 수 (tools/probe_flat_sigungu.py,
+# (지역별)시군구 단독 축 ~250행 → 페이지 6개 x 50행/페이지).
+_PAGE_SIZE = 50
+_PAGER_CONTAINER_SELECTOR = ".dx-datagrid-pager"
+_PAGER_SELECTOR = f"{_PAGER_CONTAINER_SELECTOR} .dx-page"
+# 페이저가 진짜 있으면 보통 이 안에 뜬다. 없으면 이 시간을 다 기다린 뒤에야
+# "없다"고 판단한다 — 고정 500ms 대기보다 느릴 수 있지만, 늦게 뜨는 페이저를
+# "없다"고 오판해 조용히 첫 페이지만 반환하는 쪽보다 안전 쪽으로 실패한다.
+_PAGER_WAIT_MS = 5_000
 
 
 class OlapExtractionError(RuntimeError):
@@ -115,13 +123,28 @@ def fetch_grid(url: str, *, page, max_scrolls: int = 200) -> list[list[str]]:
     반환은 **완전한 그리드임이 확인된 경우에만** 이뤄진다:
       - 그리드가 스크롤이 아니라 페이지네이션으로 나뉘어 있으면 → OlapPaginationError
         (Task 7 Step 0 탐침: 행이 많은 레이아웃은 무한 스크롤이 아니라
-        `.dx-datagrid-pager` 페이저를 쓴다 — 스크롤 누적은 첫 페이지만 본다)
+        `.dx-datagrid-pager` 페이저를 쓴다 — 스크롤 누적은 첫 페이지만 본다).
+        두 가지 독립된 방식으로 확인한다: (1) 페이저 컨테이너 자체를 명시적으로
+        기다린 뒤 세고, (2) 페이저가 안 잡혔더라도 본문 행 수가 페이지 크기의
+        정확한 배수면 — 우연이라기엔 너무 딱 맞아떨어지므로 — 탐지 실패로 보고
+        역시 실패한다. 타이밍에 기대는 건 (1)뿐이고, (2)는 시간과 무관한 교차
+        검증이다.
       - max_scrolls 를 다 써도 고유 행 수가 계속 늘면 → OlapExtractionError
       - 컨테이너는 렌더됐지만 데이터 행이 하나도 없으면 → OlapExtractionError
     """
     page.goto(url, wait_until="networkidle", timeout=90_000)
     page.wait_for_selector("div.dx-pivotgrid-area-data", timeout=60_000)
-    page.wait_for_timeout(500)
+
+    # 페이저는 데이터 영역보다 늦게 뜰 수 있다. 고정 시간만 대기한 뒤 바로
+    # 세면, 진짜 다중 페이지 그리드도 "아직 안 떴을 뿐"인데 "없다"고 오판해
+    # 스크롤 누적으로 새 버려 첫 페이지만 조용히 반환할 위험이 있다 — 이
+    # 모듈이 막으려는 바로 그 실수다. 그래서 페이저 컨테이너 자체를 명시적
+    # 타임아웃으로 기다린다: 그 안에 뜨면 잡고, 끝까지 안 뜨면 그게 "없다"는
+    # 증거다 (추측이 아니다).
+    try:
+        page.wait_for_selector(_PAGER_CONTAINER_SELECTOR, timeout=_PAGER_WAIT_MS)
+    except Exception:  # noqa: BLE001 — 타임아웃까지 기다렸는데도 없다 = 진짜 없다
+        pass
 
     pager_count = page.locator(_PAGER_SELECTOR).count()
     if pager_count > 1:
@@ -135,6 +158,18 @@ def fetch_grid(url: str, *, page, max_scrolls: int = 200) -> list[list[str]]:
 
     grid = page.evaluate(_EXTRACT_JS)
     header, *body = grid
+
+    # 시간에 기대지 않는 교차검증: 페이저를 못 찾았는데도 본문 행 수가 정확히
+    # 페이지 크기(_PAGE_SIZE)의 배수면, 데이터가 우연히 페이지 경계에서 끝났을
+    # 가능성보다 페이저 탐지 자체(셀렉터 변경 등)가 실패했을 가능성이 훨씬
+    # 크다 — 역시 조용히 넘어가지 않는다.
+    if pager_count <= 1 and len(body) > 0 and len(body) % _PAGE_SIZE == 0:
+        raise OlapPaginationError(
+            f"페이저를 못 찾았는데 본문이 정확히 {_PAGE_SIZE}행 배수({len(body)}행)다 — "
+            f"우연히 페이지 경계에서 끝났다고 보기보다 페이저 탐지 실패로 본다. "
+            f"페이저 셀렉터({_PAGER_SELECTOR})가 바뀌었는지 확인하라."
+        )
+
     seen: dict[str, list[str]] = {"".join(row): row for row in body if row}
 
     scroller = page.locator(

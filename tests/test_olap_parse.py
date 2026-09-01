@@ -79,15 +79,24 @@ class _FakePage:
     (= 더 스크롤해도 안 늘어남 = 안정화).
     infinite_new_rows=True 면 호출마다 이전에 없던 새 행을 계속 만들어낸다
     (= 가상화가 절대 끝나지 않는 고장 상황을 흉내낸다).
+
+    pager_wait_raises: 페이저 컨테이너(_PAGER_CONTAINER_SELECTOR)를 명시적으로
+    기다리는 wait_for_selector 호출이 타임아웃(=페이저가 안 떴다)나는지 여부.
+    False(기본)면 "결국 떴다"고 보고 그냥 리턴한다 — 실제 Playwright 가 폴링
+    끝에 찾아내는 것과 같은 결과다. area-data 컨테이너를 기다리는 첫 호출은
+    항상 성공한 것으로 본다.
     """
 
     def __init__(self, windows=None, infinite_new_rows: bool = False,
-                 header=None, scroller_raises: bool = False, pager_count: int = 1):
+                 header=None, scroller_raises: bool = False, pager_count: int = 1,
+                 pager_wait_raises: bool = False):
         self._windows = windows or []
         self._infinite = infinite_new_rows
         self._header = header or ["지역", "값"]
         self.scroller_raises = scroller_raises
         self.pager_count = pager_count
+        self.pager_wait_raises = pager_wait_raises
+        self.pager_wait_calls = 0
         self._call = 0
         self.scroll_calls = 0
 
@@ -95,8 +104,12 @@ class _FakePage:
     def goto(self, *a, **k):
         pass
 
-    def wait_for_selector(self, *a, **k):
-        pass
+    def wait_for_selector(self, selector, **k):
+        if "pager" in selector:
+            self.pager_wait_calls += 1
+            if self.pager_wait_raises:
+                raise TimeoutError(f"타임아웃 (가짜): {selector}")
+        # 그 외(예: area-data 컨테이너)는 항상 뜬 것으로 본다.
 
     def wait_for_timeout(self, *a, **k):
         pass
@@ -201,3 +214,53 @@ def test_fetch_grid_does_not_raise_pagination_error_for_single_page_grid():
 
     header, *body = rows
     assert {r[0] for r in body} == {"a", "b"}
+
+
+# ---------------------------------------------------------------------------
+# 코디네이터 Fix round 1 — 페이저 탐지가 고정 500ms 대기 하나에만 기대지 않게
+# 두 가지 독립된 방어를 더했다: (1) 페이저 컨테이너 자체를 명시적으로 기다리고,
+# (2) 페이저가 안 잡혀도 본문 행 수가 페이지 크기의 정확한 배수면 탐지 실패로
+# 본다(시간과 무관한 교차검증).
+# ---------------------------------------------------------------------------
+
+def test_fetch_grid_pager_detected_after_explicit_wait_not_a_fixed_sleep():
+    """페이저가 area-data 컨테이너보다 늦게 뜨는 상황을 흉내낸다. 고정 시간
+    대기 뒤 곧장 세는 방식이었다면 이 시나리오에서 늦게 뜬 페이저를 놓쳐
+    "없다"고 오판했을 것이다 — 페이저 컨테이너를 명시적으로 기다려야
+    (설령 그 사이 폴링이 있었더라도) 여전히 잡아내고 실패해야 한다."""
+    page = _FakePage(windows=[[["a", "1"]]], pager_count=6, pager_wait_raises=False)
+
+    with pytest.raises(olap.OlapPaginationError):
+        olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+
+    assert page.pager_wait_calls == 1  # 페이저 컨테이너를 실제로 기다렸다
+    assert page.scroll_calls == 0  # 스크롤을 시도하기도 전에 실패했다
+
+
+def test_fetch_grid_raises_when_body_is_exact_page_size_multiple_with_no_pager_detected():
+    """페이저 셀렉터가 바뀌어 탐지 자체가 실패한 상황을 흉내낸다(대기해도 못
+    찾음). 그런데 본문 행 수가 정확히 페이지 크기(_PAGE_SIZE)의 배수다 —
+    데이터가 우연히 그 경계에서 끝났다고 보기보다 탐지 실패로 보고 역시
+    시끄럽게 실패해야 한다."""
+    body = [[f"row{i}", str(i)] for i in range(olap._PAGE_SIZE)]
+    page = _FakePage(windows=[body], pager_count=1, pager_wait_raises=True)
+
+    with pytest.raises(olap.OlapPaginationError) as exc_info:
+        olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+
+    msg = str(exc_info.value)
+    assert str(olap._PAGE_SIZE) in msg
+    assert page.scroll_calls == 0  # 교차검증은 스크롤 전에 걸린다
+
+
+def test_fetch_grid_returns_normally_when_no_pager_and_row_count_is_not_a_page_boundary():
+    """페이저를 못 찾았고, 본문 행 수(37)도 페이지 크기의 배수가 아니다 —
+    진짜로 페이저가 없는 정상적인 작은 그리드다. 예외 없이 그대로 반환해야
+    한다."""
+    body = [[f"row{i}", str(i)] for i in range(37)]
+    page = _FakePage(windows=[body], pager_count=1, pager_wait_raises=True)
+
+    rows = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+
+    header, *out_body = rows
+    assert len(out_body) == 37
