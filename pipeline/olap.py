@@ -13,6 +13,15 @@
 """
 from __future__ import annotations
 
+
+class OlapExtractionError(RuntimeError):
+    """그리드 추출이 불완전하거나 비어 있을 때 낸다.
+
+    이 파이프라인의 원칙: 잘린 그리드를 그럴듯하게 반환하지 않는다. 완전한지
+    확신이 없으면 조용히 절반만 반환하는 대신 시끄럽게 실패한다.
+    """
+
+
 _EXTRACT_JS = r"""
 () => {
   function expandRow(tr) {
@@ -62,12 +71,24 @@ def parse_grid(rows: list[list[str]]) -> list[dict]:
     return [dict(zip(header, row)) for row in body]
 
 
-def fetch_grid(url: str, *, page, max_scrolls: int = 40) -> list[list[str]]:
+def fetch_grid(url: str, *, page, max_scrolls: int = 200) -> list[list[str]]:
     """Playwright page 로 뷰어를 열고 렌더된 PivotGrid 를 읽는다.
 
-    작은 표(예: 시도 단위)는 스크롤 없이 전량이 DOM 에 있는 것을 확인했다.
-    dataScroll=Y 가상화에 대비해 데이터 영역을 끝까지 스크롤하며 고유 행을
-    누적한다 — 더 늘지 않으면 멈춘다.
+    작은 표(예: 시도 단위, 17행)는 스크롤 없이 전량이 DOM 에 있는 것을 확인했다.
+    dataScroll=Y 가상화가 걸리는 큰 표(예: 시군구 x 직종, 최대 약 2,450행)에
+    대비해 데이터 영역을 끝까지 스크롤하며 고유 행을 누적한다 — 더 늘지 않으면
+    멈춘다.
+
+    max_scrolls=200 인 이유: 관측된 행 높이는 19px, 스크롤 한 번은 2000px 이므로
+    한 번에 최대 ~105행 분량이 넘어간다. 예상 최대 워크로드(약 2,450행)를 덮으려면
+    이론상 ~24회면 충분하지만, 실제 뷰포트/행 높이가 보고서마다 달라질 수 있어
+    8배 안전 여유를 두고 브리프가 제시한 200을 그대로 썼다. 캡을 넉넉히 잡아도
+    비용이 없다 — 정상적인 경우 행이 늘지 않는 순간 즉시 멈추기 때문이고, 캡이
+    부족한 유일한 경우는 이제(아래) 조용히 잘린 결과 대신 예외를 낸다.
+
+    반환은 **완전한 그리드임이 확인된 경우에만** 이뤄진다:
+      - max_scrolls 를 다 써도 고유 행 수가 계속 늘면 → OlapExtractionError
+      - 컨테이너는 렌더됐지만 데이터 행이 하나도 없으면 → OlapExtractionError
     """
     page.goto(url, wait_until="networkidle", timeout=90_000)
     page.wait_for_selector("div.dx-pivotgrid-area-data", timeout=60_000)
@@ -75,16 +96,19 @@ def fetch_grid(url: str, *, page, max_scrolls: int = 40) -> list[list[str]]:
 
     grid = page.evaluate(_EXTRACT_JS)
     header, *body = grid
-    seen = {"".join(row): row for row in body if row}
+    seen: dict[str, list[str]] = {"".join(row): row for row in body if row}
 
     scroller = page.locator(
         "div.dx-pivotgrid-area-data .dx-scrollable-container"
     ).first
+
+    stabilized = False
     for _ in range(max_scrolls):
         before = len(seen)
         try:
             scroller.evaluate("el => { el.scrollTop += 2000; }")
-        except Exception:  # noqa: BLE001 — 스크롤 대상이 없으면 더 할 게 없다
+        except Exception:  # noqa: BLE001 — 스크롤 대상 자체가 없다: 가상화가 없는 작은 표로 간주
+            stabilized = True
             break
         page.wait_for_timeout(200)
         grid = page.evaluate(_EXTRACT_JS)
@@ -93,12 +117,27 @@ def fetch_grid(url: str, *, page, max_scrolls: int = 40) -> list[list[str]]:
             if row:
                 seen["".join(row)] = row
         if len(seen) == before:
+            stabilized = True
             break
+
+    if not stabilized:
+        raise OlapExtractionError(
+            f"그리드가 안정화되지 않았다 — max_scrolls={max_scrolls} 를 다 써도 "
+            f"행이 계속 늘어남 (수집된 고유 행 {len(seen)}개, 캡 {max_scrolls}회 도달). "
+            "잘렸을 수 있는 그리드를 반환하지 않는다 — max_scrolls 를 늘리거나 "
+            "가상화 동작을 다시 확인하라."
+        )
+
+    if not seen:
+        raise OlapExtractionError(
+            "그리드 컨테이너는 렌더됐지만 데이터 행이 하나도 없다 (헤더만 존재) — "
+            "느린 렌더링이거나 필터/레이아웃이 잘못됐을 수 있다."
+        )
 
     return [header, *seen.values()]
 
 
-def fetch_and_parse_grid(url: str, *, browser, max_scrolls: int = 40) -> list[dict]:
+def fetch_and_parse_grid(url: str, *, browser, max_scrolls: int = 200) -> list[dict]:
     """뷰어를 열어 그리드를 읽고 바로 dict 리스트로 편다 (fetch_grid + parse_grid)."""
     page = browser.new_page()
     try:
