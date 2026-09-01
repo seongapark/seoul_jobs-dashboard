@@ -53,7 +53,7 @@ def test_parse_grid_row_count_matches_header_free_body():
 # ---------------------------------------------------------------------------
 
 class _FakeLocator:
-    """page.locator(...).first.evaluate(...) 체인만 흉내낸다."""
+    """page.locator(...).first.evaluate(...) / .count() 체인만 흉내낸다."""
 
     def __init__(self, page: "_FakePage"):
         self._page = page
@@ -67,6 +67,9 @@ class _FakeLocator:
         if self._page.scroller_raises:
             raise RuntimeError("스크롤 대상 없음 (가짜)")
 
+    def count(self):
+        return self._page.pager_count
+
 
 class _FakePage:
     """dx-pivotgrid 가상화를 흉내낸다.
@@ -79,11 +82,12 @@ class _FakePage:
     """
 
     def __init__(self, windows=None, infinite_new_rows: bool = False,
-                 header=None, scroller_raises: bool = False):
+                 header=None, scroller_raises: bool = False, pager_count: int = 1):
         self._windows = windows or []
         self._infinite = infinite_new_rows
         self._header = header or ["지역", "값"]
         self.scroller_raises = scroller_raises
+        self.pager_count = pager_count
         self._call = 0
         self.scroll_calls = 0
 
@@ -168,3 +172,32 @@ def test_fetch_grid_raises_when_grid_has_no_body_rows():
         olap.fetch_grid("http://fake", page=page, max_scrolls=10)
 
     assert "데이터 행" in str(exc_info.value)
+
+
+def test_fetch_grid_raises_when_grid_is_paginated_not_scrolled():
+    """Task 7 Step 0 탐침(2026-09-01, tools/probe_flat_sigungu.py): (근무지역)시군구
+    처럼 행이 많은 필드를 행 축에 놓으면 EIS 뷰어는 무한 스크롤이 아니라
+    `.dx-datagrid-pager` 페이저로 나눠 보여준다 (실측: (지역별)시군구 단독
+    ~250행 → 페이지 6개). 스크롤 누적은 같은 페이지 안에서만 맴돌다 "더 안
+    늘어난다"며 안정화된 것으로 착각해 첫 페이지만 반환한다 — 그래서 스크롤을
+    시도하기도 전에 페이저 존재를 확인해 시끄럽게 실패해야 한다."""
+    page = _FakePage(windows=[[["a", "1"]]], pager_count=6)
+
+    with pytest.raises(olap.OlapPaginationError) as exc_info:
+        olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+
+    msg = str(exc_info.value)
+    assert "6" in msg
+    assert page.scroll_calls == 0  # 스크롤을 시도하기도 전에 실패해야 한다
+
+
+def test_fetch_grid_does_not_raise_pagination_error_for_single_page_grid():
+    """페이저가 있어도(.dx-page 요소 1개 = 페이지 1개뿐) 정상 동작해야 한다 —
+    OlapPaginationError 는 page 가 2개 이상일 때만."""
+    windows = [[["a", "1"], ["b", "2"]], [["a", "1"], ["b", "2"]]]
+    page = _FakePage(windows=windows, pager_count=1)
+
+    rows = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+
+    header, *body = rows
+    assert {r[0] for r in body} == {"a", "b"}

@@ -10,8 +10,24 @@
   보고서 "유효구인구직" (17개 시도 + 총계 = 18행) 은 헤드리스에서도 스크롤 없이
   전량이 DOM 에 이미 존재했다 (dataScroll=Y 는 더 큰 표, 예: 시군구 단위에 대비한
   것으로 보인다). 안전을 위해 fetch_grid 는 그래도 스크롤-누적을 시도한다.
+
+Task 7 Step 0 탐침 추가 (2026-09-01, tools/probe_flat_sigungu.py 등):
+  위 가정은 절반만 맞았다. dataScroll=Y 무한 스크롤은 행이 적어 원래 스크롤이
+  필요 없던 표(시도 17행)에서만 확인됐을 뿐, 실제로 행이 많은 표는 스크롤이
+  아니라 **DevExtreme 데이터그리드 스타일 페이저**(`.dx-datagrid-pager`,
+  `.dx-pages` 안에 `.dx-page` 들)로 나뉘어 렌더된다. (지역별)시군구 단독(중첩
+  없이, ~250행)만 놓아도 페이지 6개로 쪼개져 최초 로드에는 50행만 DOM 에 있다.
+  이 상태에서 `.dx-pivotgrid-area-data .dx-scrollable-container` 를 스크롤해도
+  더 이상 새 행이 나오지 않으므로 (같은 페이지 안에서 스크롤이 끝까지 갔을 뿐,
+  다음 페이지로 안 넘어간다) 루프는 "안정화됐다"고 착각하고 50행짜리 그리드를
+  아무 예외 없이 반환한다 — 이 모듈이 막으려던 바로 그 "잘렸는데 그럴듯한 결과"
+  다. 그래서 스크롤을 시도하기 전에 페이저 존재를 먼저 확인해 시끄럽게 실패
+  시킨다(`OlapPaginationError`). 페이지네이션을 실제로 넘겨가며 누적하는 로직은
+  아직 없다 — 후속 작업.
 """
 from __future__ import annotations
+
+_PAGER_SELECTOR = ".dx-datagrid-pager .dx-page"
 
 
 class OlapExtractionError(RuntimeError):
@@ -19,6 +35,16 @@ class OlapExtractionError(RuntimeError):
 
     이 파이프라인의 원칙: 잘린 그리드를 그럴듯하게 반환하지 않는다. 완전한지
     확신이 없으면 조용히 절반만 반환하는 대신 시끄럽게 실패한다.
+    """
+
+
+class OlapPaginationError(OlapExtractionError):
+    """그리드가 스크롤이 아니라 (다중) 페이지로 나뉘어 있을 때 낸다.
+
+    fetch_grid 의 스크롤-누적 루프는 페이지네이션을 넘기지 못한다 — 같은 페이지
+    안에서 스크롤이 끝까지 가면 "더 안 늘어난다"며 안정화된 것으로 착각해 첫
+    페이지만 조용히 반환한다. 페이지가 2개 이상이면 스크롤을 시도하기도 전에
+    이 예외를 낸다. 페이지네이션 누적은 아직 구현되지 않았다.
     """
 
 
@@ -87,12 +113,25 @@ def fetch_grid(url: str, *, page, max_scrolls: int = 200) -> list[list[str]]:
     부족한 유일한 경우는 이제(아래) 조용히 잘린 결과 대신 예외를 낸다.
 
     반환은 **완전한 그리드임이 확인된 경우에만** 이뤄진다:
+      - 그리드가 스크롤이 아니라 페이지네이션으로 나뉘어 있으면 → OlapPaginationError
+        (Task 7 Step 0 탐침: 행이 많은 레이아웃은 무한 스크롤이 아니라
+        `.dx-datagrid-pager` 페이저를 쓴다 — 스크롤 누적은 첫 페이지만 본다)
       - max_scrolls 를 다 써도 고유 행 수가 계속 늘면 → OlapExtractionError
       - 컨테이너는 렌더됐지만 데이터 행이 하나도 없으면 → OlapExtractionError
     """
     page.goto(url, wait_until="networkidle", timeout=90_000)
     page.wait_for_selector("div.dx-pivotgrid-area-data", timeout=60_000)
     page.wait_for_timeout(500)
+
+    pager_count = page.locator(_PAGER_SELECTOR).count()
+    if pager_count > 1:
+        raise OlapPaginationError(
+            f"그리드가 페이지 {pager_count}개로 나뉘어 있다 ({_PAGER_SELECTOR}) — "
+            "스크롤 누적으로는 첫 페이지 분량만 보인다. 페이지네이션 누적이 "
+            "구현되기 전까지 이 레이아웃은 fetch_grid 로 안전하게 못 받는다. "
+            "행 축을 페이지 하나에 다 들어가는 크기로 줄이거나, 페이지네이션 "
+            "누적을 구현하라."
+        )
 
     grid = page.evaluate(_EXTRACT_JS)
     header, *body = grid
