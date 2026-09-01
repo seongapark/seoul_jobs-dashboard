@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import requests
 
-API = "https://kosis.kr/openapi/statisticsData.do"
+API = "https://kosis.kr/openapi/Param/statisticsParameterData.do"
+# 주의: orgId+tblId(구버전) 하나뿐인 "/openapi/statisticsData.do" 는 이 표에
+# 대해 항상 err 20 "필수요청변수값이 누락되었습니다"를 돌려준다 — 파라미터가
+# 아니라 엔드포인트 자체가 문제였다. 실측(2026-09-01)으로 확인했다.
 ORG_ID = "118"
 
 
