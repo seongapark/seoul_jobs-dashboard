@@ -24,6 +24,16 @@ Task 7 Step 0 탐침 추가 (2026-09-01, tools/probe_flat_sigungu.py 등):
   다. 그래서 스크롤을 시도하기 전에 페이저 존재를 먼저 확인해 시끄럽게 실패
   시킨다(`OlapPaginationError`). 페이지네이션을 실제로 넘겨가며 누적하는 로직은
   아직 없다 — 후속 작업.
+
+Task 7b (2026-09-01): 그 후속 작업 — 페이지네이션 누적을 구현했다. 페이저가
+  2개 이상이면 더 이상 즉시 실패하지 않는다. 대신 1페이지째는 이미 읽어둔 채로
+  `.dx-datagrid-pager .dx-page` 버튼을 2페이지부터 순서대로 클릭해 걷는다
+  (`_walk_paginated_grid`). 실패는 여전히 시끄럽다 — 페이지 클릭이 행을 못
+  바꾸면(`OlapPageWalkError`), 어느 페이지가 데이터 행을 하나도 안 주면
+  (`OlapExtractionError`), 마지막이 아닌 페이지가 `_PAGE_SIZE` 와 다르면, 또는
+  다 걷은 뒤 고유 행 총수가 페이저가 암시하는 총합과 안 맞으면 모두
+  `OlapPageWalkError` 를 낸다. 잘린 그리드를 반환하는 대신 예외를 낸다는 원칙은
+  그대로다.
 """
 from __future__ import annotations
 
@@ -54,6 +64,112 @@ class OlapPaginationError(OlapExtractionError):
     페이지만 조용히 반환한다. 페이지가 2개 이상이면 스크롤을 시도하기도 전에
     이 예외를 낸다. 페이지네이션 누적은 아직 구현되지 않았다.
     """
+
+
+class OlapPageWalkError(OlapPaginationError):
+    """다중 페이지 그리드를 누적하는 도중 무언가 신뢰할 수 없을 때 낸다 (Task 7b).
+
+    다음 중 하나면 이 예외를 낸다 — 모두 "잘렸을 수 있는데 그럴듯한 결과"를
+    막기 위함이다:
+      - 페이지 버튼을 클릭해 다음 페이지로 이동을 시도했는데 렌더된 행이 이전
+        페이지와 똑같다 (클릭이 페이지를 못 넘겼을 가능성).
+      - 마지막 페이지가 아닌 페이지가 본문 행 수 `_PAGE_SIZE` 와 다르다.
+      - 전 페이지를 다 걸은 뒤 고유 행 총수가 페이저가 암시하는 총합
+        ((페이지수-1) x `_PAGE_SIZE` + 마지막 페이지 행 수) 과 다르다.
+    """
+
+
+# 페이지 이동 사이 짧은 대기 (정중함) — 스크롤 폴링 대기(200ms)와 같은 자릿수.
+_PAGE_ADVANCE_WAIT_MS = 400
+
+
+def _click_page(page, page_number: int) -> None:
+    """`.dx-datagrid-pager` 안 1-based page_number 번째 페이지 버튼을 클릭한다."""
+    page.locator(_PAGER_SELECTOR).nth(page_number - 1).click()
+
+
+def _walk_paginated_grid(
+    page, *, header: list[str], first_body: list[list[str]], pager_count: int
+) -> list[list[str]]:
+    """`.dx-datagrid-pager` 페이지 버튼을 순서대로 눌러가며 전 페이지를 누적한다.
+
+    fetch_grid 가 이미 1페이지째를 읽어(header, first_body) pager_count>1 임을
+    확인한 뒤에만 호출한다. 페이지 사이 `_PAGE_ADVANCE_WAIT_MS` 만큼 쉰다(정중함).
+
+    반환은 두 가지 독립된 기준으로 완전성이 확인된 경우에만:
+      1. 페이지 이동마다 실제로 행이 바뀌었는가 (안 바뀌면 클릭이 안 먹은 것).
+      2. 마지막 페이지를 제외한 모든 페이지가 정확히 `_PAGE_SIZE` 행인가, 그리고
+         다 걷은 뒤 고유 행 총수가 페이저가 "암시하는" 총합
+         ((pager_count-1) x `_PAGE_SIZE` + 마지막 페이지 행 수) 과 정확히 같은가.
+    어느 쪽이든 안 맞으면 조용히 넘어가지 않고 예외를 낸다.
+    """
+    if pager_count < 2:
+        # 호출부(fetch_grid)가 이미 pager_count>1 일 때만 부르므로 정상 경로에서는
+        # 닿지 않는다 — 방어적 불변식이다. 그래도 페이지 수를 못 정한 채 여기
+        # 들어오면 조용히 진행하는 대신 시끄럽게 실패한다.
+        raise OlapPageWalkError(
+            f"페이지 수를 알아낼 수 없다 (pager_count={pager_count}) — "
+            f"{_PAGER_SELECTOR} 로 페이지 버튼을 둘 이상 세지 못했다."
+        )
+
+    if not first_body:
+        raise OlapExtractionError(
+            "1페이지에 데이터 행이 하나도 없다 (헤더만 존재) — "
+            "느린 렌더링이거나 필터/레이아웃이 잘못됐을 수 있다."
+        )
+
+    seen: dict[str, list[str]] = {}
+    for row in first_body:
+        if row:
+            seen["".join(row)] = row
+
+    prev_body = first_body
+    page_sizes = [len(first_body)]
+
+    for page_number in range(2, pager_count + 1):
+        _click_page(page, page_number)
+        page.wait_for_timeout(_PAGE_ADVANCE_WAIT_MS)
+
+        grid = page.evaluate(_EXTRACT_JS)
+        _, *body = grid
+
+        if not body:
+            raise OlapExtractionError(
+                f"{page_number}페이지가 데이터 행을 하나도 반환하지 않았다 — "
+                "잘렸을 수 있는 그리드를 반환하지 않는다."
+            )
+
+        if body == prev_body:
+            raise OlapPageWalkError(
+                f"{page_number}페이지로 이동을 시도했지만 렌더된 행이 이전 "
+                f"페이지와 똑같다 (총 {pager_count}페이지 중) — "
+                f"{_PAGER_SELECTOR} 클릭이 페이지를 못 넘겼을 수 있다."
+            )
+
+        page_sizes.append(len(body))
+        for row in body:
+            if row:
+                seen["".join(row)] = row
+        prev_body = body
+
+    for i, size in enumerate(page_sizes[:-1], start=1):
+        if size != _PAGE_SIZE:
+            raise OlapPageWalkError(
+                f"{i}페이지가 {size}행을 반환했다 — 마지막 페이지가 아닌데 "
+                f"페이지 크기({_PAGE_SIZE})와 다르다. 페이지가 잘못 넘어갔을 "
+                "수 있다."
+            )
+
+    implied_total = (pager_count - 1) * _PAGE_SIZE + page_sizes[-1]
+    if len(seen) != implied_total:
+        raise OlapPageWalkError(
+            f"누적 고유 행 수({len(seen)})가 페이저가 암시하는 총합"
+            f"({implied_total} = 페이지 {pager_count}개 중 {pager_count - 1}개 x "
+            f"{_PAGE_SIZE}행 + 마지막 페이지 {page_sizes[-1]}행)과 다르다 — "
+            "일부 행이 중복 판정으로 소실됐거나 페이지가 잘못 넘어갔을 수 있다."
+        )
+
+    return [header, *seen.values()]
 
 
 _EXTRACT_JS = r"""
@@ -121,14 +237,19 @@ def fetch_grid(url: str, *, page, max_scrolls: int = 200) -> list[list[str]]:
     부족한 유일한 경우는 이제(아래) 조용히 잘린 결과 대신 예외를 낸다.
 
     반환은 **완전한 그리드임이 확인된 경우에만** 이뤄진다:
-      - 그리드가 스크롤이 아니라 페이지네이션으로 나뉘어 있으면 → OlapPaginationError
-        (Task 7 Step 0 탐침: 행이 많은 레이아웃은 무한 스크롤이 아니라
-        `.dx-datagrid-pager` 페이저를 쓴다 — 스크롤 누적은 첫 페이지만 본다).
-        두 가지 독립된 방식으로 확인한다: (1) 페이저 컨테이너 자체를 명시적으로
-        기다린 뒤 세고, (2) 페이저가 안 잡혔더라도 본문 행 수가 페이지 크기의
-        정확한 배수면 — 우연이라기엔 너무 딱 맞아떨어지므로 — 탐지 실패로 보고
-        역시 실패한다. 타이밍에 기대는 건 (1)뿐이고, (2)는 시간과 무관한 교차
-        검증이다.
+      - 그리드가 스크롤이 아니라 페이지네이션으로 나뉘어 있으면(Task 7 Step 0
+        탐침: 행이 많은 레이아웃은 무한 스크롤이 아니라 `.dx-datagrid-pager`
+        페이저를 쓴다 — 스크롤 누적은 첫 페이지만 본다) → 스크롤 대신
+        `_walk_paginated_grid` 로 페이지 버튼을 순서대로 눌러가며 전 페이지를
+        누적한다(Task 7b). 페이저 존재는 두 가지 독립된 방식으로 확인한다:
+        (1) 페이저 컨테이너 자체를 명시적으로 기다린 뒤 세고, (2) 페이저가 안
+        잡혔더라도 본문 행 수가 페이지 크기의 정확한 배수면 — 우연이라기엔
+        너무 딱 맞아떨어지므로 — 탐지 실패로 보고 실패한다(모듈 수준 단일
+        페이지로 오판하지 않기 위함). 타이밍에 기대는 건 (1)뿐이고, (2)는
+        시간과 무관한 교차검증이다. 페이지 걷기 자체가 실패하면(클릭이 안
+        먹거나, 어느 페이지가 비었거나, 누적 총수가 안 맞으면)
+        `OlapPageWalkError`/`OlapExtractionError` 를 낸다 (`_walk_paginated_grid`
+        docstring 참고).
       - max_scrolls 를 다 써도 고유 행 수가 계속 늘면 → OlapExtractionError
       - 컨테이너는 렌더됐지만 데이터 행이 하나도 없으면 → OlapExtractionError
     """
@@ -147,17 +268,17 @@ def fetch_grid(url: str, *, page, max_scrolls: int = 200) -> list[list[str]]:
         pass
 
     pager_count = page.locator(_PAGER_SELECTOR).count()
-    if pager_count > 1:
-        raise OlapPaginationError(
-            f"그리드가 페이지 {pager_count}개로 나뉘어 있다 ({_PAGER_SELECTOR}) — "
-            "스크롤 누적으로는 첫 페이지 분량만 보인다. 페이지네이션 누적이 "
-            "구현되기 전까지 이 레이아웃은 fetch_grid 로 안전하게 못 받는다. "
-            "행 축을 페이지 하나에 다 들어가는 크기로 줄이거나, 페이지네이션 "
-            "누적을 구현하라."
-        )
 
     grid = page.evaluate(_EXTRACT_JS)
     header, *body = grid
+
+    if pager_count > 1:
+        # 스크롤 누적으로는 첫 페이지 분량만 보인다 — 페이지 버튼을 순서대로
+        # 눌러가며 전 페이지를 누적한다(Task 7b). 완전성이 확인되지 않으면
+        # _walk_paginated_grid 가 알아서 시끄럽게 실패한다.
+        return _walk_paginated_grid(
+            page, header=header, first_body=body, pager_count=pager_count
+        )
 
     # 시간에 기대지 않는 교차검증: 페이저를 못 찾았는데도 본문 행 수가 정확히
     # 페이지 크기(_PAGE_SIZE)의 배수면, 데이터가 우연히 페이지 경계에서 끝났을

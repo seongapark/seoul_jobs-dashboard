@@ -53,7 +53,7 @@ def test_parse_grid_row_count_matches_header_free_body():
 # ---------------------------------------------------------------------------
 
 class _FakeLocator:
-    """page.locator(...).first.evaluate(...) / .count() 체인만 흉내낸다."""
+    """page.locator(...).first.evaluate(...) / .count() / .nth(i).click() 체인만 흉내낸다."""
 
     def __init__(self, page: "_FakePage"):
         self._page = page
@@ -61,6 +61,12 @@ class _FakeLocator:
     @property
     def first(self):
         return self
+
+    def nth(self, index):
+        return self
+
+    def click(self):
+        self._page.click_calls += 1
 
     def evaluate(self, js):
         self._page.scroll_calls += 1
@@ -99,6 +105,7 @@ class _FakePage:
         self.pager_wait_calls = 0
         self._call = 0
         self.scroll_calls = 0
+        self.click_calls = 0
 
     # Playwright page 인터페이스 중 fetch_grid 가 실제로 쓰는 것만 흉내낸다
     def goto(self, *a, **k):
@@ -187,13 +194,11 @@ def test_fetch_grid_raises_when_grid_has_no_body_rows():
     assert "데이터 행" in str(exc_info.value)
 
 
-def test_fetch_grid_raises_when_grid_is_paginated_not_scrolled():
-    """Task 7 Step 0 탐침(2026-09-01, tools/probe_flat_sigungu.py): (근무지역)시군구
-    처럼 행이 많은 필드를 행 축에 놓으면 EIS 뷰어는 무한 스크롤이 아니라
-    `.dx-datagrid-pager` 페이저로 나눠 보여준다 (실측: (지역별)시군구 단독
-    ~250행 → 페이지 6개). 스크롤 누적은 같은 페이지 안에서만 맴돌다 "더 안
-    늘어난다"며 안정화된 것으로 착각해 첫 페이지만 반환한다 — 그래서 스크롤을
-    시도하기도 전에 페이저 존재를 확인해 시끄럽게 실패해야 한다."""
+def test_fetch_grid_raises_when_page_click_does_not_change_rendered_rows():
+    """Task 7b: 페이저가 페이지 6개라는데 다음 페이지로 클릭해 이동해도 렌더된 행이
+    이전 페이지와 그대로면(셀렉터가 안 맞거나 클릭이 안 먹은 경우) "더 안 늘어난다"며
+    안정화된 것으로 착각해 첫 페이지만 반환하면 안 된다 — 스크롤 폴백으로 새지 않고
+    시끄럽게 실패해야 한다."""
     page = _FakePage(windows=[[["a", "1"]]], pager_count=6)
 
     with pytest.raises(olap.OlapPaginationError) as exc_info:
@@ -201,7 +206,77 @@ def test_fetch_grid_raises_when_grid_is_paginated_not_scrolled():
 
     msg = str(exc_info.value)
     assert "6" in msg
-    assert page.scroll_calls == 0  # 스크롤을 시도하기도 전에 실패해야 한다
+    assert page.scroll_calls == 0  # 스크롤 폴백으로 새지 않는다
+
+
+# ---------------------------------------------------------------------------
+# Task 7b — 페이지네이션 누적: 실제로 페이지 버튼을 눌러가며 전 페이지를 걷는다.
+# ---------------------------------------------------------------------------
+
+def test_fetch_grid_walks_all_pages_and_accumulates_in_order():
+    """페이저가 3페이지라고 보고하면(50/50/23행), 스크롤 대신 페이지 버튼을
+    순서대로 눌러가며 전량(123행)을 중복 없이, 페이지 순서 그대로 누적해야
+    한다. 헤더는 한 번만 남는다."""
+    page1 = [[f"row{i}", str(i)] for i in range(50)]
+    page2 = [[f"row{i}", str(i)] for i in range(50, 100)]
+    page3 = [[f"row{i}", str(i)] for i in range(100, 123)]
+    page = _FakePage(windows=[page1, page2, page3], pager_count=3)
+
+    rows = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+
+    header, *body = rows
+    assert header == ["지역", "값"]
+    assert len(body) == 123
+    assert [r[0] for r in body] == [f"row{i}" for i in range(123)]
+    assert page.click_calls == 2  # 1페이지는 이미 로드됨 — 2, 3페이지로만 이동
+    assert page.scroll_calls == 0  # 스크롤 폴백을 쓰지 않는다
+
+
+def test_fetch_grid_raises_when_a_later_page_returns_zero_body_rows():
+    """도중 한 페이지가 데이터 행을 하나도 안 돌려주면(렌더 실패 등) 조용히 나머지
+    페이지만으로 그럴듯한 결과를 만들지 않고 예외를 낸다."""
+    page1 = [[f"row{i}", str(i)] for i in range(50)]
+    windows = [page1, []]  # 2페이지가 텅 빔
+    page = _FakePage(windows=windows, pager_count=3)
+
+    with pytest.raises(olap.OlapExtractionError) as exc_info:
+        olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+
+    assert "2페이지" in str(exc_info.value)
+
+
+def test_fetch_grid_raises_when_accumulated_count_disagrees_with_pager_implied_total():
+    """세 페이지 각각은 페이지 크기 규칙을 지키는데(50/50/23), 2페이지 첫 행이
+    1페이지 행과 내용이 우연히 같아 중복 판정으로 사라진다 — 페이저가 암시하는
+    총합(123)과 실제 누적 고유 행(122)이 어긋나므로 조용히 넘어가지 않고 예외를
+    내야 한다."""
+    page1 = [[f"row{i}", str(i)] for i in range(50)]
+    page2 = [["row0", "0"]] + [[f"row{i}", str(i)] for i in range(50, 99)]
+    page3 = [[f"row{i}", str(i)] for i in range(99, 122)]
+    page = _FakePage(windows=[page1, page2, page3], pager_count=3)
+
+    with pytest.raises(olap.OlapPaginationError) as exc_info:
+        olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+
+    msg = str(exc_info.value)
+    assert "123" in msg
+    assert "122" in msg
+
+
+def test_fetch_grid_raises_when_a_non_last_page_is_short():
+    """마지막 페이지가 아닌 페이지가 _PAGE_SIZE 보다 적은 행을 돌려주면(페이지가
+    잘못 넘어갔을 가능성) 조용히 넘어가지 않고 예외를 낸다."""
+    page1 = [[f"row{i}", str(i)] for i in range(50)]
+    page2 = [[f"row{i}", str(i)] for i in range(50, 80)]  # 30행 — 마지막이 아닌데 부족
+    page3 = [[f"row{i}", str(i)] for i in range(80, 103)]
+    page = _FakePage(windows=[page1, page2, page3], pager_count=3)
+
+    with pytest.raises(olap.OlapPaginationError) as exc_info:
+        olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+
+    msg = str(exc_info.value)
+    assert "2페이지" in msg
+    assert "30" in msg
 
 
 def test_fetch_grid_does_not_raise_pagination_error_for_single_page_grid():
