@@ -25,8 +25,11 @@ export function step(value, breaks) {
 const RAMP_OF_SIDO = { 11: "s", 41: "g", 28: "i" };
 
 // scope 칩 라벨 -> 그 시도만 남기는 필터 코드. "수도권"은 필터 없음을
-// 뜻하므로 표에 없다.
-const SIDO_OF_SCOPE = { 서울: "11", 경기: "41", 인천: "28" };
+// 뜻하므로 표에 없다. screens/center.js 도 칩 필터링에 똑같은 표가 필요해
+// (Task 16) 여기서 export 해 그쪽이 import 한다 — 사본을 둘로 늘리지
+// 않는다. 경기를 31(KOSIS 코드)로 잘못 적은 적이 실제로 있었으니(R9)
+// 사본이 둘이면 그 실수가 재발할 자리도 둘이 된다.
+export const SIDO_OF_SCOPE = { 서울: "11", 경기: "41", 인천: "28" };
 
 // values: { [시군구코드]: 구인배수 } — 코드가 없으면(undefined) "값 없음"
 // 회색 타일로 그린다. layout: data/tile_layout.json 모양({ code: {row,col,

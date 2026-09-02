@@ -1,5 +1,5 @@
 import { load, parseSelection, selectionHash, optionsFor, reconcileForSido } from "./data.js";
-import { esc } from "./components.js";
+import { esc, AXISLINE_HTML } from "./components.js";
 
 // 지역 선택지는 서울·경기·인천 셋으로 고정한다(R30) — 그 밖의 시도는 이
 // 대시보드 범위 밖이라 파일에도 없다.
@@ -101,8 +101,11 @@ async function main() {
     document.querySelectorAll(".segment").forEach((el) =>
       el.classList.toggle("segment--active", el.dataset.route === selection.route));
     const module = await import(`./screens/${selection.route}.js`);
+    // 스펙 §4.1 — 스위처 바로 아래 "근무지역 기준" 한 줄(components.AXISLINE_HTML).
+    // 라우트 넷이 전부 같은 줄을 쓰므로 화면마다 복사하지 않고 여기 한
+    // 곳에서만 붙인다.
     document.getElementById("screen").innerHTML =
-      renderSwitcher(selection.route, store, selection) + module.render(store, selection);
+      renderSwitcher(selection.route, store, selection) + AXISLINE_HTML + module.render(store, selection);
     wireSwitcher(selection, store);
   };
 

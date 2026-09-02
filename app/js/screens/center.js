@@ -1,6 +1,6 @@
 import { card, collapseCard, bars, esc, num, RATIO_NOTE } from "../components.js";
 import { hasValue, ratio, titleFor, period, selectionHash, shortSigunguName } from "../data.js";
-import { render as renderTiles } from "../tilemap.js";
+import { render as renderTiles, SIDO_OF_SCOPE } from "../tilemap.js";
 
 // 센터별 화면 — 컨트롤러가 다시 쓴 브리프(task-14-brief.md) §전체가 유일한
 // 요구사항이다. 플랜 원문의 Task 14는 카드 16(스펙 §4.4)이 통째로 빠져
@@ -18,7 +18,8 @@ import { render as renderTiles } from "../tilemap.js";
 // 명시돼 있지만(스펙 §4.4), 실은 이 화면 전체가 처음부터 그 축을 안 본다.
 
 const SCOPE_CHIPS = ["수도권", "서울", "경기", "인천"];
-const SIDO_OF_SCOPE = { 서울: "11", 경기: "41", 인천: "28" };
+// SIDO_OF_SCOPE 는 tilemap.js 가 갖고 여기가 import 한다(Task 16) — 사본을
+// 둘로 늘리지 않는다.
 // 지도 램프 변수 접두와 legend 색 클래스(.ramp__nm.s/g/i, app.css)를 함께 문다.
 const RAMP_OF_SCOPE = [
   { label: "서울", cls: "s", prefix: "s" },

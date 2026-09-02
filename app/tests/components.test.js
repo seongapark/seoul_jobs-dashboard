@@ -1,5 +1,5 @@
-// app/tests/components.test.js — esc / bars / collapseCard / insuredBody.
-import { esc, bars, collapseCard, insuredBody } from "../js/components.js";
+// app/tests/components.test.js — esc / bars / collapseCard / insuredBody / AXISLINE_HTML.
+import { esc, bars, collapseCard, insuredBody, AXISLINE_HTML } from "../js/components.js";
 
 let failed = 0;
 const eq = (got, want, label) => {
@@ -94,5 +94,9 @@ has(ibUp, "100", "증감 절댓값(800-700)");
 
 const ibDown = insuredBody({ insured: 700, gained: 0, lost: 0, priorInsured: 800 });
 has(ibDown, "is-down", "줄었으면 is-down");
+
+// --- AXISLINE_HTML (스펙 §4.1, app.js 가 스위처 바로 뒤 한 곳에서만 쓴다) ---
+has(AXISLINE_HTML, 'class="axisline"', "축 표기 줄에 목업 CSS 의 axisline 클래스를 쓴다");
+has(AXISLINE_HTML, "<b>근무지역</b> 기준", "문구는 근무지역 기준이고 b 강조가 붙는다");
 
 process.exit(failed ? 1 : 0);
