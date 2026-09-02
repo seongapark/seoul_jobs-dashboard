@@ -294,6 +294,19 @@ def _is_aggregate_row(row: dict, spec: Spec) -> bool:
     return any(value.endswith(_SUBTOTAL_SUFFIX) for value in values)
 
 
+# 전역 제약 "폐지 코드 41283·41710·41730·41810 제외"를 **이름으로** 이행한다.
+#
+# 이 목록은 "일반구 모양(낱말 셋)이라서 모시로 이관될 수 있는" 폐지 코드만 담는다.
+#   - 41283 경기도 고양시 일산구 (2005 폐지, 일산동구·일산서구로 분할) — 실제로
+#     이관될 수 있는 유일한 확인된 사례라 여기 명시한다.
+#   - 41710·41730·41810 은 이 저장소에 이름이 남아 있지 않다(sigungu_names.json
+#     은 현행 70개만 담고, 폐지 코드는 애초에 들어 있지 않다). 낱말이 셋인 일반구
+#     라벨로 EIS 에 나타나는 것을 아직 본 적이 없어 이름을 지어내지 않았다 —
+#     **그런 라벨이 관측되면 그 이름을 여기 추가해야 한다.** 낱말이 둘인 시·군
+#     라벨이면 모시 후보가 시도 이름("경기도")이 돼 `sigungu_names.json` 에 없고,
+#     이관 후보가 아니라 그냥 걸러진다.
+ABOLISHED_GENERAL_DISTRICTS = frozenset({"경기도 고양시 일산구"})
+
 # 수도권 시도 이름표 -> 행정표준코드. 시군구 이름은 전부 이 셋 중 하나로 시작한다.
 _SIDO_OF_PREFIX = {"서울특별시": "11", "경기도": "41", "인천광역시": "28"}
 
@@ -321,14 +334,22 @@ def _reparent_general_districts(rows: list[dict], spec: Spec) -> list[dict]:
 
     수도권 시도에 속하는데 모시를 못 찾은 일반구 행은 **조용히 버리지 않고
     예외**를 낸다 — 조용히 버리는 것이 애초에 이 문제를 만든 실패 모양이다.
-    폐지 코드 넷(41283·41710·41730·41810)은 제약대로 계속 제외 대상이고 애초에
-    `sigungu_names.json` 에 없으므로 여기 걸리지 않는다(낱말이 둘뿐이라 일반구
-    후보가 아니다). 수도권 밖 일반구("경상남도 창원시 성산구")는 그냥 넘어간다.
+    수도권 밖 일반구("경상남도 창원시 성산구")는 그냥 넘어간다.
+
+    **폐지 코드는 이름으로 명시해 이관에서 뺀다**(`ABOLISHED_GENERAL_DISTRICTS`).
+    처음엔 "폐지 코드 넷은 낱말이 둘뿐이라 일반구 후보가 아니다"라고 적어 뒀는데
+    **그건 틀린 보장이었다** — 41283(고양시 일산구, 2005 폐지)의 라벨은
+    `'경기도 고양시 일산구'` 로 낱말이 셋이고, 모시 후보 `'경기도 고양시'` 가
+    `sigungu_names.json` 에 41280 으로 실재한다. EIS 가 그 라벨을 내는 순간
+    폐지 코드가 배제되기는커녕 고양시에 조용히 합산되고, 후신인 일산동구·
+    일산서구까지 함께 오면 이중계상이 된다. 제약의 이행을 이름 길이라는 우연에
+    맡기지 않으려고 명시 목록으로 바꿨다.
     """
     if spec.sido_axis:
-        return rows
+        return rows, False
     known = eis.SIGUNGU_NAME_TO_CODE
     out = []
+    reparented = False
     for row in rows:
         # 그룹 소계 행("경기도 수원시 권선구 전체")은 손대지 않는다 — _split_metro 가
         # 뒤에서 버린다. 실측으로 걸린 두 가지 때문에 여기서 반드시 먼저 걸러야 한다:
@@ -344,6 +365,9 @@ def _reparent_general_districts(rows: list[dict], spec: Spec) -> list[dict]:
         if name in known or len(parts) < 3 or _sido_of_name(name) is None:
             out.append(row)
             continue
+        if name in ABOLISHED_GENERAL_DISTRICTS:
+            out.append(row)          # 이관하지 않는다 — _split_metro 가 버린다
+            continue
         parent = " ".join(parts[:-1])
         if parent not in known:
             raise FetchError(
@@ -351,7 +375,8 @@ def _reparent_general_districts(rows: list[dict], spec: Spec) -> list[dict]:
                 f"(찾아본 모시: {parent!r}). 조용히 버리지 않는다 — "
                 "data/sigungu_names.json 이 이 시를 담고 있는지 확인하라.")
         out.append({**row, spec.region: parent})
-    return out
+        reparented = True
+    return out, reparented
 
 
 def _split_metro(rows: list[dict], spec: Spec) -> tuple[list[dict], dict]:
@@ -393,22 +418,34 @@ def _split_metro(rows: list[dict], spec: Spec) -> tuple[list[dict], dict]:
     return kept, residual
 
 
-def _merge_rows(rows: list[dict], spec: Spec) -> list[dict]:
-    """축이 같은 행을 하나로 합친다 — 일반구 이관(R53)이 만든 중복을 더한다.
+def _merge_rows(rows: list[dict], spec: Spec, *, merge_expected: bool) -> list[dict]:
+    """축이 같은 행을 하나로 합친다 — 일반구 이관(R53)이 만든 중복만.
 
     이관 뒤에는 "경기도 수원시"(시 레벨 잔여)와 장안·권선·팔달·영통 네 일반구가
     같은 축 값을 갖게 된다. 그대로 두면 같은 (시군구, 직종) 행이 여럿 나가
-    화면이 어떻게 다루느냐에 따라 값이 달라진다 — 여기서 더해 하나로 만든다.
+    화면이 어떻게 다루느냐에 따라 값이 달라진다 — 그때는 더해 하나로 만든다.
+
+    **이관이 일어나지 않았으면 합칠 정상 중복이 애초에 없다.** 시도 축 spec 과
+    시계열이 그렇다. 그 경로에서 축이 같은 행이 둘 이상 나왔다면 그건 정상이
+    아니라 이상(그리드 중복·집계 행 누출)이므로 조용히 더해 없애지 않고 예외를
+    낸다 — 합계가 안 바뀌어 `check_sido_totals` 도 못 잡는 종류라 여기서
+    잡아야 한다. 덤으로, 합산을 안 하므로 `collect_insured_series` 처럼
+    측정값 일부만 내는 수집기의 출력에 없던 `gained: 0`·`lost: 0` 이 생기는
+    부수 효과도 사라진다.
     """
     numeric = set(spec.measures)
     merged: dict[tuple, dict] = {}
     for row in rows:
         key = tuple(sorted((k, v) for k, v in row.items() if k not in numeric))
-        if key in merged:
-            for field in numeric:
-                merged[key][field] = merged[key].get(field, 0) + row.get(field, 0)
-        else:
+        if key not in merged:
             merged[key] = dict(row)
+            continue
+        if not merge_expected:
+            raise FetchError(
+                f"축이 같은 행이 둘 이상인데 합칠 이유가 없다(일반구 이관이 없었다): "
+                f"{row} — 그리드 중복이나 집계 행 누출을 의심한다.")
+        for field in numeric:
+            merged[key][field] = merged[key].get(field, 0) + row.get(field, 0)
     return list(merged.values())
 
 
@@ -447,10 +484,10 @@ def _grid(spec: Spec, period: str, *, browser, get, fetch) -> olap.ParsedGrid:
 
 def _fetch_monthly(spec: Spec, period: str, *, browser, cm, get, fetch) -> Fetched:
     grid = _grid(spec, period, browser=browser, get=get, fetch=fetch)
-    normalized = _reparent_general_districts(_normalize(grid.rows, period), spec)
+    normalized, reparented = _reparent_general_districts(_normalize(grid.rows, period), spec)
     body, residual = _split_metro(normalized, spec)
     rows = spec.parse(body, cm) if spec.needs_cm else spec.parse(body)
-    rows = _merge_rows(rows, spec)          # 일반구 이관이 만든 중복을 더한다 (R53)
+    rows = _merge_rows(rows, spec, merge_expected=reparented)   # R53 이 만든 중복만
     checks.check_axis_values(rows, _axis_fields(spec))
     return Fetched(rows, _totals(_normalize(grid.summaries, period), spec),
                    None if spec.sido_axis else residual)
@@ -495,9 +532,10 @@ def _fetch_series(spec: Spec, periods, *, browser, get, fetch, sleep, log) -> li
             sleep(SERIES_PAUSE_SECONDS)     # 정중함 — 몰아치지 않는다
         try:
             grid = _grid(spec, period, browser=browser, get=get, fetch=fetch)
-            body, _ = _split_metro(
-                _reparent_general_districts(_normalize(grid.rows, period), spec), spec)
-            month = _merge_rows(spec.parse(body), spec)
+            normalized, reparented = _reparent_general_districts(
+                _normalize(grid.rows, period), spec)
+            body, _ = _split_metro(normalized, spec)
+            month = _merge_rows(spec.parse(body), spec, merge_expected=reparented)
             checks.check_axis_values(month, _axis_fields(spec))
         except Exception as error:          # noqa: BLE001 — 한 달 실패는 건너뛴다
             failed.append(period)

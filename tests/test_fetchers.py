@@ -469,3 +469,55 @@ def test_mobility_rows_with_the_same_industry_on_both_axes_are_kept(recorded_lay
 
     out = built["mobility"]("202607").rows
     assert len(out) == 1 and out[0]["movers"] == 1280
+
+
+def test_abolished_general_district_is_not_merged_into_its_parent(recorded_layout):
+    """재리뷰 1 — 폐지 코드 41283(고양시 일산구)은 라벨이 3낱말이고 모시
+    '경기도 고양시'(41280)가 실재해서, 이름으로 막지 않으면 배제되기는커녕
+    조용히 고양시에 합산된다(후신 일산동구·일산서구까지 오면 이중계상)."""
+    label = "2026년 07월"
+    rows = [
+        {"(근무지역)시군구": "경기도 고양시", "직종_중분류": "2025직종_경영·행정·사무직",
+         f"{label}_유효구인인원(전체)": "100", f"{label}_유효구직자수(전체)": "200"},
+        {"(근무지역)시군구": "경기도 고양시 일산구", "직종_중분류": "2025직종_경영·행정·사무직",
+         f"{label}_유효구인인원(전체)": "9,999", f"{label}_유효구직자수(전체)": "9,999"},
+        {"(근무지역)시군구": "경기도 고양시 일산동구", "직종_중분류": "2025직종_경영·행정·사무직",
+         f"{label}_유효구인인원(전체)": "50", f"{label}_유효구직자수(전체)": "60"},
+    ]
+    grid = _FakeGrid(result=olap.ParsedGrid(rows, []))
+    built = fetchers.monthly_fetchers(browser=object(), cm=_CM(), get=_fake_get(), fetch=grid)
+
+    fetched = built["vacancy"]("202607")
+    by_code = {r["sigungu"]: r for r in fetched.rows}
+
+    assert by_code["41280"]["vacancy"] == 150        # 100 + 일산동구 50, 일산구는 빠진다
+    assert "경기도 고양시 일산구" in str(fetchers.ABOLISHED_GENERAL_DISTRICTS)
+    # 버려진 값은 사라지지 않고 잔여로 남아 시도 검산이 볼 수 있다
+    assert fetched.residuals["41"]["vacancy"] == 9999
+
+
+def test_duplicate_axis_rows_raise_when_no_reparenting_happened(recorded_layout):
+    """재리뷰 4 — 이관이 없었으면 합칠 정상 중복도 없다. 그런데도 키가 겹치면
+    그리드 중복·집계 행 누출이므로 조용히 더해 없애지 않고 실패한다."""
+    label = "2026년 07월"
+    row = {"(근무지역)시도": "서울", f"{label}_유효구인인원(전체)": "10",
+           f"{label}_유효구직자수(전체)": "100"}
+    grid = _FakeGrid(result=olap.ParsedGrid([row, dict(row)], []))
+    built = fetchers.monthly_fetchers(browser=object(), cm=_CM(), get=_fake_get(), fetch=grid)
+
+    with pytest.raises(fetchers.FetchError):
+        built["vacancy_sido"]("202607")
+
+
+def test_series_rows_do_not_gain_measure_fields_they_never_had(recorded_layout):
+    """재리뷰 4 부수효과 — collect_insured_series 는 insured 만 낸다.
+    병합이 돌면 없던 gained/lost 가 0 으로 생겼다."""
+    label = "2026년 07월"
+    rows = [{"(사업장)시도": name, f"{label}_피보험자수(전체)": "10"}
+            for name in ("서울", "경기", "인천")]
+    grid = _FakeGrid(result=olap.ParsedGrid(rows, []))
+    built = fetchers.series_fetchers(["202607"], browser=object(), get=_fake_get(),
+                                     fetch=grid, sleep=lambda s: None)
+
+    out = built["insured_series"]()
+    assert out and all("gained" not in row and "lost" not in row for row in out)
