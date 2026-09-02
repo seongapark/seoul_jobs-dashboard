@@ -12,7 +12,7 @@ from datetime import date
 
 import pytest
 
-from pipeline import center_map, cli, collect, fetchers, series
+from pipeline import center_map, cli, collect, est, fetchers, series
 
 
 def _freeze(monkeypatch, year, month, day=1):
@@ -258,10 +258,12 @@ def test_main_halfyear_passes_compare_names_from_vacancy_json(tmp_path, monkeypa
 
     calls = {}
 
-    def fake_run_halfyear(period, *, out_dir, api_key, collector=None, compare_names=None):
-        calls.update(period=period, out_dir=out_dir, api_key=api_key,
-                      compare_names=compare_names)
-        return {"est": 1}
+    def fake_run_halfyear(period, *, out_dir, api_key, collector=None,
+                          compare_names=None, out_name="est"):
+        if out_name == "est":
+            calls.update(period=period, out_dir=out_dir, api_key=api_key,
+                          compare_names=compare_names)
+        return {out_name: 1}
 
     monkeypatch.setattr(collect, "run_halfyear", fake_run_halfyear)
 
@@ -274,6 +276,61 @@ def test_main_halfyear_passes_compare_names_from_vacancy_json(tmp_path, monkeypa
     assert calls["compare_names"] == {"경영·행정·사무직", "보건·의료직"}
 
 
+def test_main_halfyear_collects_the_industry_table_too(tmp_path, monkeypatch):
+    """C2 — est.collect_industry 를 부르는 곳이 테스트뿐이었다(R3 로 만들어 놓고
+    프로덕션 경로에 배선하지 않았다). 그래서 est.json 에 industry_name 을 가진
+    행이 한 줄도 없었고, 산업별 카드 13 은 영원히 감춰졌다."""
+    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    monkeypatch.setenv("KOSIS_API_KEY", "test-key")
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    _freeze(monkeypatch, 2026, 6, 25)
+
+    (data_dir / "vacancy.json").write_text(
+        json.dumps({"rows": [{"occupation": "경영·행정·사무직"}]}), encoding="utf-8")
+    (data_dir / "vacancy_industry.json").write_text(
+        json.dumps({"rows": [{"industry": "제조업"}, {"industry": ""}]}), encoding="utf-8")
+
+    calls = []
+
+    def fake_run_halfyear(period, *, out_dir, api_key, collector=None,
+                          compare_names=None, out_name="est"):
+        calls.append({"collector": collector, "out_name": out_name,
+                      "compare_names": compare_names})
+        return {out_name: 1}
+
+    monkeypatch.setattr(collect, "run_halfyear", fake_run_halfyear)
+
+    assert cli.main("halfyear") == 0
+    assert [call["out_name"] for call in calls] == ["est", "est_industry"]
+    assert calls[1]["collector"] is est.collect_industry
+    # 직종 이름은 vacancy.json 과, 산업 이름은 vacancy_industry.json 과 대조한다.
+    assert calls[0]["compare_names"] == {"경영·행정·사무직"}
+    assert calls[1]["compare_names"] == {"제조업"}
+
+
+def test_main_halfyear_skips_industry_name_check_and_logs_when_its_pair_is_missing(
+        tmp_path, monkeypatch, capsys):
+    """산업 축 파일이 아직 없어도 반기 수집이 죽지 않는다 — 다만 조용히 넘어가지 않는다."""
+    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    monkeypatch.setenv("KOSIS_API_KEY", "test-key")
+    (tmp_path / "data").mkdir()
+    _freeze(monkeypatch, 2026, 6, 25)
+
+    calls = []
+
+    def fake_run_halfyear(period, *, out_dir, api_key, collector=None,
+                          compare_names=None, out_name="est"):
+        calls.append(compare_names)
+        return {out_name: 1}
+
+    monkeypatch.setattr(collect, "run_halfyear", fake_run_halfyear)
+
+    assert cli.main("halfyear") == 0
+    assert calls == [None, None]
+    assert "vacancy_industry.json" in capsys.readouterr().out
+
+
 def test_main_halfyear_skips_compare_names_and_logs_when_vacancy_missing(
         tmp_path, monkeypatch, capsys):
     """9c 리뷰 지적: 안전망이 조용히 안 걸리면 있으나 마나다 — 건너뛴다는 사실이
@@ -284,10 +341,13 @@ def test_main_halfyear_skips_compare_names_and_logs_when_vacancy_missing(
     _freeze(monkeypatch, 2026, 12, 25)   # 12월 -> 하반기(YYYY02)
 
     calls = {}
-    monkeypatch.setattr(
-        collect, "run_halfyear",
-        lambda period, *, out_dir, api_key, collector=None, compare_names=None:
-            calls.setdefault("compare_names", compare_names) and {"est": 1})
+
+    def fake_run_halfyear(period, *, out_dir, api_key, collector=None,
+                          compare_names=None, out_name="est"):
+        calls.setdefault("compare_names", compare_names)
+        return {out_name: 1}
+
+    monkeypatch.setattr(collect, "run_halfyear", fake_run_halfyear)
 
     cli.main("halfyear")
 

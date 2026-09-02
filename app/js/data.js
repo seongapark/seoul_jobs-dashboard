@@ -67,6 +67,9 @@ const OPTIONAL_FILE_OF = {
   insuredSeries: "insured_series",
   vacancyIndustry: "vacancy_industry",
   insuredIndustry: "insured_industry",
+  // C2 — 산업별 KOSIS 표(DT_118N_DEN061)는 직종별 표와 다른 파일이다. 반기
+  // 수집이 한 번이라도 돌기 전에는 없으므로 선택 파일이다(est.json 은 필수).
+  estIndustry: "est_industry",
 };
 
 export async function load(base = "../data") {

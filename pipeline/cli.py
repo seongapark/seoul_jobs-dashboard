@@ -20,7 +20,7 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-from pipeline import center_map, collect, fetchers, series
+from pipeline import center_map, collect, est, fetchers, series
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -126,20 +126,24 @@ def _previous_series(out_dir: Path) -> dict:
     return out
 
 
-def _compare_names(out_dir: Path) -> set[str] | None:
-    """`run_halfyear(compare_names=...)` 에 넘길 vacancy.json 의 직종 이름 집합.
+def _compare_names(out_dir: Path, *, source: str, field: str) -> set[str] | None:
+    """`run_halfyear(compare_names=...)` 에 넘길 EIS 쪽 이름 집합.
 
     9c 가 만든 `checks.check_name_overlap` 을 실전 경로에 건다(9c 리뷰
     지적 — 만들고도 부르는 곳이 없어 안전망이 실전에 안 걸려 있었다).
-    `vacancy.json` 이 아직 없으면(첫 수집) `None` 으로 건너뛰되, 조용히
+    짝이 되는 EIS 파일이 아직 없으면(첫 수집) `None` 으로 건너뛰되, 조용히
     지나가면 안전망이 있으나 마나이므로 건너뛴다는 사실을 로그로 남긴다.
+
+    C2 — 축마다 대조 상대가 다르다: 직종 이름은 `vacancy.json` 의
+    `occupation`, 산업 이름은 `vacancy_industry.json` 의 `industry` 다.
+    산업 표를 직종 이름과 대조하면 겹침이 0 이라 매번 거짓 실패한다.
     """
-    data = _load_json(out_dir / "vacancy.json")
+    data = _load_json(out_dir / source)
     if data is None:
-        print("halfyear: vacancy.json 이 아직 없다 — 직종 이름 겹침 검사를 건너뛴다 "
+        print(f"halfyear: {source} 이 아직 없다 — {field} 이름 겹침 검사를 건너뛴다 "
               "(첫 수집이라 비교할 상대가 없다).")
         return None
-    return {row["occupation"] for row in data.get("rows", []) if row.get("occupation")}
+    return {row[field] for row in data.get("rows", []) if row.get(field)}
 
 
 def main(mode: str) -> int:
@@ -190,9 +194,20 @@ def main(mode: str) -> int:
             raise SystemExit(
                 "KOSIS_API_KEY 환경변수가 없다 — GitHub Secret 또는 로컬 export 로 넣어라.")
         period = _halfyear_period()
+        # C2 — KOSIS 표는 **둘**이다. 직종별(DT_118N_DEN062)과 산업별
+        # (DT_118N_DEN061)을 각각 받아 다른 파일에 쓴다. 예전에는 여기서
+        # run_halfyear 를 한 번만 불러 직종별로만 떨어졌고, 그래서
+        # data/est.json 에 industry_name 을 가진 행이 한 줄도 없었다 —
+        # 산업별 화면의 카드 13 은 그 키로 조인하므로 영원히 감춰졌다.
         result = collect.run_halfyear(
             period, out_dir=out_dir, api_key=api_key,
-            compare_names=_compare_names(out_dir))
+            compare_names=_compare_names(out_dir, source="vacancy.json",
+                                         field="occupation"))
+        result |= collect.run_halfyear(
+            period, out_dir=out_dir, api_key=api_key,
+            collector=est.collect_industry, out_name="est_industry",
+            compare_names=_compare_names(out_dir, source="vacancy_industry.json",
+                                         field="industry"))
         print(f"halfyear({period}): {result}")
         return 0
 

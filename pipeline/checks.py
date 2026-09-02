@@ -65,9 +65,16 @@ def check_not_identical_to_previous(rows, previous) -> None:
 
 
 def check_est_seam(rows) -> None:
+    # C2 — est 행의 분류 축은 표에 따라 갈린다: 직종별 표(est.collect)는
+    # `occupation` 을, 산업별 표(est.collect_industry)는 `industry` 를 싣고
+    # 서로 상대의 키를 아예 갖지 않는다. `row["occupation"]` 직접 인덱싱은
+    # 산업 행에서 KeyError 로 죽어, 값이 튀는지 판정하기도 전에 수집이 다른
+    # 이유로 무너진다. 한 번의 호출이 받는 rows 는 늘 한 표에서 오므로
+    # (run_halfyear 가 collector 하나를 부른다) 두 축이 한 키로 뭉칠 일은 없다.
     by_key: dict[tuple, dict[str, int]] = {}
     for row in rows:
-        by_key.setdefault((row["occupation"], row["item"]), {})[row["period"]] = row["value"]
+        axis = row.get("occupation") or row.get("industry")
+        by_key.setdefault((axis, row["item"]), {})[row["period"]] = row["value"]
     for key, series in by_key.items():
         if "202502" in series and "202601" in series:
             before, after = series["202502"], series["202601"]

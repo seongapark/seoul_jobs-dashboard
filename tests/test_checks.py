@@ -60,6 +60,26 @@ def test_est_seam_normal_change_passes():
     checks.check_est_seam(rows)
 
 
+# C2 — 산업별 표(est.collect_industry)의 행에는 `occupation` 키가 아예 없다
+# (`industry`/`industry_name` 을 싣는다). row["occupation"] 을 직접 인덱싱하면
+# 검사가 CheckFailed 대신 KeyError 로 죽어, "값이 튄다"를 판정하기도 전에
+# 수집이 다른 이유로 무너진다.
+
+def test_est_seam_reads_the_industry_axis_when_there_is_no_occupation_key():
+    rows = [{"period": "202502", "industry": "C", "item": "채용인원", "value": 100},
+            {"period": "202601", "industry": "C", "item": "채용인원", "value": 400}]
+    with pytest.raises(checks.CheckFailed):
+        checks.check_est_seam(rows)
+
+
+def test_est_seam_passes_industry_rows_that_do_not_jump():
+    rows = [{"period": "202502", "industry": "C", "item": "채용인원", "value": 100},
+            {"period": "202601", "industry": "C", "item": "채용인원", "value": 110},
+            {"period": "202502", "industry": "G", "item": "채용인원", "value": 400},
+            {"period": "202601", "industry": "G", "item": "채용인원", "value": 380}]
+    checks.check_est_seam(rows)
+
+
 # --- R13: 총계 행을 실제 검산으로 쓴다 ---------------------------------------
 #
 # 유효구인인원은 등치(==)로, 유효구직건수는 이상(>=)으로 검사한다. 그 비대칭이

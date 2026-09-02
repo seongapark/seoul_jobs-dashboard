@@ -288,7 +288,15 @@ def _row_names(rows) -> set[str]:
     return names
 
 
-def run_halfyear(period, *, out_dir, api_key, collector=None, compare_names=None):
+def run_halfyear(period, *, out_dir, api_key, collector=None, compare_names=None,
+                 out_name="est"):
+    """반기 KOSIS 표 하나를 받아 `<out_name>.json` 에 쓴다.
+
+    C2 — `out_name` 이 있기 전에는 출력이 "est.json" 으로 못박혀 있었다. 직종별
+    (`est.collect`)과 산업별(`est.collect_industry`) 두 표를 받으려면 이 함수를
+    두 번 부르는 것이 자연스러운데, 그러면 두 번째 호출이 첫 번째를 조용히
+    덮어썼다 — 파일이 하나뿐이라 "산업 행이 없다"가 결함으로 보이지도 않는다.
+    """
     from pipeline import est
 
     collector = collector or est.collect
@@ -304,7 +312,7 @@ def run_halfyear(period, *, out_dir, api_key, collector=None, compare_names=None
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "est.json").write_text(
+    (out_dir / f"{out_name}.json").write_text(
         json.dumps({"period": period, "rows": rows}, ensure_ascii=False),
         encoding="utf-8")
-    return {"est": len(rows)}
+    return {out_name: len(rows)}

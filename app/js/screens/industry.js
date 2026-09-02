@@ -16,6 +16,8 @@ import { hasValue, titleFor, period, half, inSido, sumBy } from "../data.js";
 //   수 있다 — 그때 카드 10·11이 통째로 감춰지는 게 정상이다(hasValue 가
 //   undefined rows 를 false 로 처리해 알아서 감춘다).
 // - est 는 industry 코드/이름이 갈리므로 조인은 industry_name 으로 한다(R33).
+//   그리고 그 est 는 **산업별 표**(store.estIndustry)다 — 직종별 표
+//   (store.est)에는 industry_name 행이 아예 없다(C2).
 
 export function render(store, selection) {
   const name = selection.industry;
@@ -106,14 +108,19 @@ export function render(store, selection) {
   // 하나뿐이라 접지 않는다(collapseCard 아니라 card, 요구사항이 명시).
   // est 는 산업 코드를 industry 에, 이름을 industry_name 에 담는다 —
   // 조인은 industry_name 으로 한다(R33), 산업 코드 사전을 만들지 않는다.
+  //
+  // C2 — 읽는 파일은 **산업별 KOSIS 표**(est_industry.json)다. 직종별 표
+  // (est.json)에는 industry_name 을 가진 행이 애초에 한 줄도 없어 조인이
+  // 영원히 안 된다. 이 파일은 선택 파일이라(반기 수집 전이면 없다)
+  // undefined 일 수 있고, 그때는 hasValue 가 카드를 알아서 감춘다.
   const hiredSelection = { sido: selection.sido, size: "전규모", industry_name: name, item: "채용인원" };
-  if (hasValue(store.est.rows, hiredSelection)) {
-    const hired = store.est.rows.find((r) =>
+  if (hasValue(store.estIndustry?.rows, hiredSelection)) {
+    const hired = store.estIndustry.rows.find((r) =>
       r.sido === hiredSelection.sido && r.size === hiredSelection.size &&
       r.industry_name === hiredSelection.industry_name && r.item === hiredSelection.item);
     cards.push(card({
       title: `<span class="pin">13</span>${esc(titleFor(name, "채용인원"))}`,
-      badge: half(store.est.period),
+      badge: half(store.estIndustry.period),
       badgeClass: "badge--est",
       body: `<div class="card__value num">${num(hired.value)}<small>명</small></div>`,
     }));

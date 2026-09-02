@@ -251,6 +251,54 @@ def test_run_halfyear_passes_when_compare_names_overlap(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# C2 — 산업별 표를 같은 함수로 한 번 더 받는다. 출력 파일명이 "est.json" 으로
+# 못박혀 있으면 순진하게 두 번 부른 순간 두 번째가 첫 번째를 덮어쓴다.
+# ---------------------------------------------------------------------------
+
+def _halfyear_industry_rows():
+    return [
+        {"period": "202601", "sido": "11", "size": "전규모",
+         "industry": "C", "industry_name": "제조업",
+         "item": "채용인원", "value": 200},
+    ]
+
+
+def test_run_halfyear_writes_the_file_it_is_told_to(tmp_path):
+    def collector(periods, api_key):
+        return _halfyear_industry_rows()
+
+    summary = collect.run_halfyear("202601", out_dir=tmp_path, api_key="KEY",
+                                   collector=collector, out_name="est_industry")
+    assert summary == {"est_industry": 1}
+    assert (tmp_path / "est_industry.json").exists()
+    assert not (tmp_path / "est.json").exists()
+
+
+def test_two_run_halfyear_calls_do_not_clobber_each_other(tmp_path):
+    """직종 표와 산업 표를 나란히 받는 실제 수집 경로의 모양 그대로."""
+    collect.run_halfyear("202601", out_dir=tmp_path, api_key="KEY",
+                         collector=lambda periods, api_key: _halfyear_rows_with_names())
+    collect.run_halfyear("202601", out_dir=tmp_path, api_key="KEY",
+                         collector=lambda periods, api_key: _halfyear_industry_rows(),
+                         out_name="est_industry")
+
+    occupation = json.loads((tmp_path / "est.json").read_text(encoding="utf-8"))
+    industry = json.loads((tmp_path / "est_industry.json").read_text(encoding="utf-8"))
+    assert occupation["rows"][0]["occupation_name"] == "경영·행정·사무직"
+    assert industry["rows"][0]["industry_name"] == "제조업"
+
+
+def test_run_halfyear_checks_industry_names_against_the_given_set(tmp_path):
+    """산업 쪽에도 이름 겹침 검사가 걸린다 — 지금은 직종 이름만 검사했다."""
+    with pytest.raises(checks.CheckFailed):
+        collect.run_halfyear("202601", out_dir=tmp_path, api_key="KEY",
+                             collector=lambda periods, api_key: _halfyear_industry_rows(),
+                             out_name="est_industry",
+                             compare_names={"전혀 다른 업종"})
+    assert not list(tmp_path.iterdir())
+
+
+# ---------------------------------------------------------------------------
 # Task 15a — 산업 축 데이터셋(vacancy_industry/insured_industry)
 # ---------------------------------------------------------------------------
 

@@ -35,7 +35,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/est.json
+          git add data/est.json data/est_industry.json
           if git diff --cached --quiet; then
             echo "변경 없음 — 커밋 생략"
           else

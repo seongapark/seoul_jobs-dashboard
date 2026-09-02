@@ -53,7 +53,17 @@ const store = {
       { period: "202607", sido: "41", industry: "업종A", prev_industry: "경기전용이전업종", movers: 999999 },
     ],
   },
+  // C2 — 카드 13 은 **산업별 KOSIS 표**(est_industry.json)를 읽는다. 직종별
+  // 표(est.json)에는 industry_name 을 가진 행이 한 줄도 없어 조인이 영원히
+  // 안 된다. 두 파일에 다른 숫자를 넣어 둔다 — 화면이 직종 축 파일을 읽으면
+  // 아래 888888 이 나타난다.
   est: {
+    period: "202601",
+    rows: [
+      { period: "202601", sido: "11", size: "전규모", occupation: "", occupation_name: "전직종", item: "채용계획인원", value: 888888 },
+    ],
+  },
+  estIndustry: {
     period: "202601",
     rows: [
       { period: "202601", sido: "11", size: "전규모", industry: "J", industry_name: "업종A", item: "채용인원", value: 3000 },
@@ -131,6 +141,13 @@ const htmlNoEst = render(store, { sido: "11", industry: "업종2" });
 hasNot(htmlNoEst, "채용인원", "industry_name 이 안 맞으면 카드 13이 통째로 빠진다");
 // 그 사이 다른 카드(10)는 여전히 살아 있다.
 has(htmlNoEst, "산업 대분류별 유효구인", "카드 13이 없어도 카드 10은 남는다");
+
+// C2 — 카드 13 은 산업별 표(estIndustry)만 읽는다. 직종별 표(est)를 읽으면
+// industry_name 이 없어 조인이 영원히 안 되고 카드가 조용히 사라진다.
+hasNot(html, "888,888", "카드 13 은 직종 축 est 파일을 읽지 않는다");
+const htmlNoEstIndustry = render({ ...store, estIndustry: undefined }, { sido: "11", industry: "업종A" });
+hasNot(htmlNoEstIndustry, "채용인원", "산업별 est 파일이 아직 없으면 카드 13 만 감춘다");
+has(htmlNoEstIndustry, "산업 대분류별 유효구인", "그때도 나머지 카드는 살아 있다");
 
 // 7. 화면 어디에도 "유효구직" 문자열이 없다 — 이 탭엔 구직이 없다.
 hasNot(html, "유효구직", "이 화면 어디에도 유효구직이 나오지 않는다");
