@@ -1,0 +1,29 @@
+name: 테스트
+
+# 파이썬 파이프라인과 노드 화면 테스트를 push/PR 마다 함께 돈다 — 둘 중 하나만
+# 돌면 다른 쪽이 깨진 채로 병합될 수 있다.
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+
+      # tests/test_olap_extract_js.py 는 playwright(chromium)가 없으면 조용히
+      # skip 된다(pytest.importorskip/스스로 pytest.skip) — 그물이 소리 없이
+      # 사라지면 안 되므로 여기서 실제로 chromium 을 깔아 그 테스트가 돈다.
+      - run: python -m playwright install --with-deps chromium
+      - run: python -m pytest -v
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: node app/tests/run.js

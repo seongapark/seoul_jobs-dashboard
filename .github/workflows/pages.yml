@@ -1,0 +1,52 @@
+name: 배포
+
+# main 에 새 커밋(수집 워크플로의 자동 커밋 포함)이 올라갈 때마다 GitHub
+# Pages 로 배포한다.
+#
+# R37 — 경로가 배포본에서도 맞아야 한다. `app/js/data.js` 의 기본 경로는
+# "../data" 다. 플랜 원문대로 `cp -r app/* _site/` 로 앱을 사이트 루트에
+# 놓으면 "../data" 가 사이트 밖(도메인 루트 밖)을 가리켜 배포본에서만 화면이
+# 빈다. 그래서 저장소 구조를 그대로 옮긴다 — `_site/app/` 아래 앱을,
+# `_site/data/` 아래 데이터를 두면 "../data" 가 로컬(app/ 에서 본 ../data)과
+# 배포본(_site/app/ 에서 본 ../data = _site/data/) 양쪽에서 똑같이 맞는다.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 저장소 구조 그대로 옮긴다
+        run: |
+          mkdir -p _site
+          cp -r app _site/app
+          cp -r data _site/data
+          cat > _site/index.html <<'EOF'
+          <!doctype html>
+          <meta charset="utf-8">
+          <meta http-equiv="refresh" content="0; url=./app/">
+          <a href="./app/">수도권 구인구직 대시보드로 이동</a>
+          EOF
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - uses: actions/deploy-pages@v4
+        id: deployment

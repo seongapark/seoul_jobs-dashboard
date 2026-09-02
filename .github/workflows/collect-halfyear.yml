@@ -1,0 +1,39 @@
+name: 반기 수집
+
+# 6월 20일·12월 20일 10:00 KST(=UTC+9, 01:00 UTC)에 직종별사업체노동력조사
+# (KOSIS)를 받는다. 1월·7월 기준 조사가 약 5개월 뒤 공표되는 주기에 맞춘
+# 것이다(pipeline/cli.py `_halfyear_period` 참고). KOSIS REST API 만 쓰고
+# 브라우저는 필요 없다 — collect-monthly.yml 과 달리 chromium 을 안 깐다.
+on:
+  schedule:
+    - cron: "0 1 20 6,12 *"
+  workflow_dispatch:
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+
+      - run: python -m pipeline.cli halfyear
+        env:
+          KOSIS_API_KEY: ${{ secrets.KOSIS_API_KEY }}
+
+      # collect-monthly.yml 과 같은 원칙 — 수집이 성공했을 때만 돈다
+      # (if: always() 없음), git add 는 이름을 하나하나 적는다.
+      - name: 변경 사항 커밋
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/est.json
+          if git diff --cached --quiet; then
+            echo "변경 없음 — 커밋 생략"
+          else
+            git commit -m "data: 반기 자동 수집 $(date -u +%Y-%m-%d)"
+            git push
+          fi
