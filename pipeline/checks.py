@@ -195,3 +195,48 @@ def check_sido_coverage(rows, expected) -> None:
     missing = sorted(set(expected) - seen)
     if missing:
         raise CheckFailed(f"시도 {missing} 가 비었다 — 수집이 반쪽이다")
+
+
+# ---------------------------------------------------------------------------
+# R54 — 시도 검산: 약한 그물(전국 총계 at_most)에 강한 그물을 더한다.
+#
+# 실측(2026-09-02, 2026년 07월, (근무지역) 축)이 **등호**가 성립함을 보였다:
+#
+#     시군구 합  +  시도 잔여  ==  시도 값
+#     서울   15,125 + 0        == 15,125   (구직 107,164 + 248,729 == 355,893)
+#     인천    9,268 + 0        ==  9,268   (구직  38,774 +  47,853 ==  86,627)
+#     경기   48,938 + 0        == 48,938   (구직 273,931 +  43,823 == 317,754)
+#            ^ 경기는 일반구를 모시로 합산 이관(R53)한 뒤의 값이다. 이관 전에는
+#              구인 26,649 로 45.5% 가 비어 이 등호가 성립하지 않았다.
+#
+# 이건 R46 의 전국 총계 at_most 보다 훨씬 강하다 — 시도마다, 측정값마다 정확히
+# 맞아야 하므로 한 시도에서만 행이 새거나 겹쳐도 잡힌다. **R46 은 그대로 둔다**
+# (이중 그물이다).
+#
+# 잔여가 무엇인지는 fetchers._split_metro 독스트링에 적었다 — 요약하면 "시도까지만
+# 적힌 건"(시군구 축에 '서울특별시' 같은 이름으로 나타난다)과 우리 70개 표에 없는
+# 시군구 행이다. 검산이 실패하면 그 정의부터 의심하라.
+# ---------------------------------------------------------------------------
+
+def check_sido_totals(rows, residuals, sido_rows, *, field) -> None:
+    """시도별로 (시군구 합 + 잔여) 가 시도 값과 같은지 본다."""
+    parts: dict[str, int] = {}
+    for row in rows:
+        sigungu = row.get("sigungu")
+        if not sigungu:
+            continue
+        parts[sigungu[:2]] = parts.get(sigungu[:2], 0) + row.get(field, 0)
+
+    by_sido = {row.get("sido"): row for row in sido_rows}
+    for sido, total_row in sorted(by_sido.items()):
+        if sido in (None, "00"):          # 전국 총계는 R46 이 따로 본다
+            continue
+        expected = total_row.get(field)
+        if expected is None:
+            continue                      # 이 시도 파일에 없는 측정값이면 건너뛴다
+        got = parts.get(sido, 0) + (residuals or {}).get(sido, {}).get(field, 0)
+        if got != expected:
+            raise CheckFailed(
+                f"{field}: 시도 {sido} 의 시군구 합+잔여({got}) 가 시도 값({expected}) 과 "
+                f"다르다 (시군구 합 {parts.get(sido, 0)}, 잔여 "
+                f"{(residuals or {}).get(sido, {}).get(field, 0)})")

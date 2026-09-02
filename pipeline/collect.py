@@ -73,6 +73,14 @@ MEASURE_MODES: dict[str, tuple[tuple[str, str], ...]] = {
 }
 
 _SIDO_SUFFIX = "_sido"
+
+# R54 — 시군구 데이터셋과 그 짝이 되는 시도 데이터셋. 같은 run_monthly 안에서
+# 둘 다 수집되므로 서로 검산할 수 있다(시도 값을 따로 더 받지 않는다).
+# 축이 같아야 의미가 있다 — R45 로 vacancy/placement 는 (근무지역), insured 는
+# (사업장)으로 시군구·시도가 짝을 이룬다.
+_SIDO_PAIR = {"vacancy": "vacancy_sido", "vacancy_industry": "vacancy_sido",
+              "placement": "placement_sido",
+              "insured": "insured_sido", "insured_industry": "insured_sido"}
 # Task 15a — 산업 축 데이터셋도 시군구 축이다(행마다 sigungu 가 있다). 시군구
 # 완전성·인천 개편 코드 검사를 똑같이 받아야 맞다 — 빼면 산업 축 파일만
 # 시군구가 빠진 채로 조용히 나갈 수 있다.
@@ -97,6 +105,11 @@ class Fetched(NamedTuple):
 
     rows: list[dict]
     totals: dict | None
+    # R54 — 시도 검산용. "그 시도에 속하지만 우리 70개 코드에 매핑되지 않는
+    # 행들의 합"을 {시도코드: {필드: 값}} 으로 담는다. 시도 축 데이터셋처럼
+    # 개념이 없으면 None. 기본값이 있어 기존 Fetched(rows, totals) 호출은
+    # 그대로 동작한다(시도 검산만 건너뛴다).
+    residuals: dict | None = None
 
 
 def _base_name(name: str) -> str:
@@ -115,14 +128,12 @@ class _ExpectedCodes:
 
 def _effective_expected_codes(rows, cm):
     """cm.codes() 를 그대로 완전성 기준으로 쓰면 인천 개편 전후 코드가 매달
-    함께 다 있어야 하는데, 그건 check_incheon_codes 가 금지하는 바로 그
-    상황이다 — center_map.json 은 옛 코드(28110/28140/28260)를 과거 자료
-    색인용으로 영구 보존하므로 70개 안에 개편 전·후가 함께 들어 있다. 즉
-    raw cm.codes() 완전성은 실데이터로 "영원히" 만족될 수 없다(개편 이후엔
-    옛 코드가 다시 나올 리 없으므로). 그래서 실제로 관측된 쪽 era 만
-    요구하도록 완화한다 — 두 era 가 함께 관측되는 진짜 이상 상황은 여전히
-    바로 다음 줄의 check_incheon_codes 가 잡는다. 이 조정이 없으면 매달
-    수집이 영구히 실패한다.
+    함께 다 있어야 한다. R50 실측(2026-09-02)에서는 2026년 07월이 실제로 옛·신
+    코드를 함께 줘서 70개가 다 관측됐고, 그때는 이 완화가 아무것도 깎지 않는다.
+    다만 이관이 끝나 옛 코드가 사라진 달에는 raw 70개가 만족될 수 없으므로,
+    실제로 관측된 쪽 era 만 요구하도록 완화해 둔다 — 이 조정이 없으면 그때부터
+    매달 수집이 영구히 실패한다. (옛·신이 함께 오는 것을 금지하던
+    check_incheon_codes 는 R50 실측으로 반증돼 없앴다 — checks.py 참고.)
     """
     seen = {row["sigungu"] for row in rows if "sigungu" in row}
     expected = set(cm.codes())
@@ -144,7 +155,6 @@ def run_monthly(period, *, out_dir, fetchers, cm, previous=None):
         if not name.endswith(_SIDO_SUFFIX) and base in _SIGUNGU_CHECKED:
             expected = _effective_expected_codes(rows, cm)
             checks.check_regions(rows, _ExpectedCodes(expected))
-            checks.check_incheon_codes(rows)
             # R18 — 총계 검산. 그리드가 총계를 못 줬으면(totals=None) 조용히
             # 넘어가지 않고 그 자체를 실패로 본다.
             if fetched.totals is None:
@@ -152,6 +162,14 @@ def run_monthly(period, *, out_dir, fetchers, cm, previous=None):
                     f"{name}: 그리드 총계가 없다 — 검산 없이 통과시킬 수 없다")
             for total_field, mode in MEASURE_MODES.get(base, ()):
                 checks.check_against_total(rows, fetched.totals, field=total_field, mode=mode)
+            # R54 — 전국 총계 at_most 위에 얹는 시도별 등호 검산. 짝이 되는
+            # 시도 데이터셋이 이번 수집에 함께 있을 때만 돈다(없으면 조용히
+            # 건너뛰는 게 아니라 애초에 검산할 상대가 없는 것이다).
+            pair = _SIDO_PAIR.get(name)
+            if pair in collected and fetched.residuals is not None:
+                for total_field, _ in MEASURE_MODES.get(base, ()):
+                    checks.check_sido_totals(rows, fetched.residuals,
+                                             collected[pair].rows, field=total_field)
         expected_sido = _SIDO_CHECKED.get(name)
         if expected_sido:
             checks.check_sido_coverage(rows, expected_sido)

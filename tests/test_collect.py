@@ -63,16 +63,20 @@ def test_does_not_touch_network(monkeypatch, tmp_path):
 
 # --- 완전성 검사의 인천 개편 인지(era-aware) ------------------------------------
 
-def test_dual_era_incheon_rows_still_fail_even_though_70_is_complete(tmp_path):
-    """CM.codes() 그대로 70개를 다 채우면 check_regions 만 보면 '완전'하지만,
-    그 70개 자체가 개편 전후 코드를 동시에 담고 있으므로 check_incheon_codes
-    가 잡아야 한다 — run_monthly 는 두 검사를 다 거친다."""
+def test_dual_era_incheon_rows_are_accepted(tmp_path):
+    """R50 — 옛·신 인천 코드가 같은 달에 함께 오는 것은 **정상**이다.
+
+    실측(2026-09-02): 인천 시군구를 전부 더하고 시도 잔여를 얹어야 시도 값과
+    정확히 맞는다(9,268/86,627). 신설 코드만 쓰면 구인 159·구직 7,968 이
+    사라진다 — 두 시대는 상호배타이고 옛 코드 값은 미이관분이다. 그래서 예전에
+    이 조합을 막던 check_incheon_codes 를 지웠고, 이제 70개가 다 오면 통과한다."""
     rows = [{"period": "202607", "sigungu": code, "center": CM.center_of(code),
              "vacancy": 1, "seekers": 1} for code in CM.codes()]  # 진짜 70개, 두 era 다 포함
     fetchers = {"vacancy": lambda period: Fetched(rows, {"vacancy": 70, "seekers": 70})}
-    with pytest.raises(checks.CheckFailed):
-        collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
-    assert not list(tmp_path.iterdir())
+
+    summary = collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
+
+    assert summary["vacancy"] == 70
 
 
 def test_missing_region_still_fails_when_neither_era_present(tmp_path):
@@ -269,3 +273,54 @@ def test_mobility_passes_when_all_three_metro_sido_are_present(tmp_path):
     fetchers = {"mobility": lambda period: Fetched(rows, None)}
     summary = collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
     assert summary["mobility"] == 3
+
+
+# --- R54: 시도 검산이 실제 수집 경로에서 돈다 (구현만 하고 안 부르는 일 금지) ----
+
+def _sido_rows(vacancy_by_sido, seekers_by_sido):
+    return [{"period": "202607", "sido": sido, "vacancy": vacancy_by_sido[sido],
+             "seekers": seekers_by_sido[sido]} for sido in ("11", "41", "28")]
+
+
+def _parts_by_sido(rows, field):
+    out = {}
+    for row in rows:
+        out[row["sigungu"][:2]] = out.get(row["sigungu"][:2], 0) + row[field]
+    return out
+
+
+def test_sido_check_runs_in_run_monthly_and_catches_a_short_sido(tmp_path):
+    """R54 — 시도 합이 시도 값에 못 미치면(경기 일반구를 버리던 상황) 잡는다."""
+    rows = _full_rows()
+    vacancy = _parts_by_sido(rows, "vacancy")
+    seekers = _parts_by_sido(rows, "seekers")
+    vacancy["41"] += 22289                       # 시도 파일에는 있는데 시군구에 없다
+    fetchers = {
+        "vacancy": lambda period: Fetched(rows, _full_totals(), residuals={}),
+        "vacancy_sido": lambda period: Fetched(_sido_rows(vacancy, seekers), None),
+    }
+    with pytest.raises(checks.CheckFailed) as e:
+        collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
+    assert "41" in str(e.value)
+    assert not list(tmp_path.iterdir())
+
+
+def test_sido_check_passes_when_parts_plus_residual_match(tmp_path):
+    rows = _full_rows()
+    vacancy = _parts_by_sido(rows, "vacancy")
+    seekers = _parts_by_sido(rows, "seekers")
+    seekers["11"] += 248729                      # 시도까지만 적힌 건 = 잔여
+    residuals = {"11": {"vacancy": 0, "seekers": 248729}}
+    fetchers = {
+        "vacancy": lambda period: Fetched(rows, _full_totals(), residuals=residuals),
+        "vacancy_sido": lambda period: Fetched(_sido_rows(vacancy, seekers), None),
+    }
+    summary = collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
+    assert summary["vacancy"] == len(_REALISTIC_CODES)
+
+
+def test_sido_check_is_skipped_when_the_pair_was_not_collected(tmp_path):
+    """짝이 되는 시도 데이터셋이 이번 수집에 없으면 검산할 상대가 없다."""
+    fetchers = {"vacancy": lambda period: Fetched(_full_rows(), _full_totals(), residuals={})}
+    summary = collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
+    assert summary["vacancy"] == len(_REALISTIC_CODES)

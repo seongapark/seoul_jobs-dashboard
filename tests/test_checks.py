@@ -211,3 +211,41 @@ def test_check_sido_coverage_fails_when_a_metro_sido_is_missing():
 def test_check_sido_coverage_passes_when_all_present():
     rows = [{"sido": "11"}, {"sido": "41"}, {"sido": "28"}, {"sido": "00"}]
     checks.check_sido_coverage(rows, ("11", "41", "28"))
+
+
+# --- R54: 시도 검산 (시군구 합 + 잔여 == 시도 값) --------------------------------
+
+def _sigungu_row(code, vacancy):
+    return {"period": "202607", "sigungu": code, "vacancy": vacancy}
+
+
+def test_check_sido_totals_passes_when_parts_plus_residual_match():
+    rows = [_sigungu_row("11110", 100), _sigungu_row("11140", 25)]
+    residuals = {"11": {"vacancy": 0}}
+    sido_rows = [{"sido": "11", "vacancy": 125}, {"sido": "00", "vacancy": 999}]
+    checks.check_sido_totals(rows, residuals, sido_rows, field="vacancy")
+
+
+def test_check_sido_totals_counts_the_residual():
+    """잔여(시도까지만 적힌 건)를 버리면 등호가 성립하지 않는다 — 실측 서울 구직이 그랬다."""
+    rows = [_sigungu_row("11110", 100)]
+    sido_rows = [{"sido": "11", "vacancy": 130}]
+    checks.check_sido_totals(rows, {"11": {"vacancy": 30}}, sido_rows, field="vacancy")
+    with pytest.raises(checks.CheckFailed):
+        checks.check_sido_totals(rows, {}, sido_rows, field="vacancy")
+
+
+def test_check_sido_totals_fails_when_a_sido_is_short():
+    """경기 일반구를 버리던 상황(45.5% 누락)이 정확히 이 모양으로 걸린다."""
+    rows = [_sigungu_row("41110", 26649)]
+    sido_rows = [{"sido": "41", "vacancy": 48938}]
+    with pytest.raises(checks.CheckFailed) as e:
+        checks.check_sido_totals(rows, {"41": {"vacancy": 0}}, sido_rows, field="vacancy")
+    assert "41" in str(e.value)
+
+
+def test_check_sido_totals_ignores_the_national_total_row():
+    """전국 총계('00')는 R46 의 at_most 가 따로 본다 — 여기서 겹쳐 보지 않는다."""
+    rows = [_sigungu_row("11110", 10)]
+    sido_rows = [{"sido": "00", "vacancy": 999999}, {"sido": "11", "vacancy": 10}]
+    checks.check_sido_totals(rows, {}, sido_rows, field="vacancy")
