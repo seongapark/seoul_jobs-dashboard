@@ -116,8 +116,15 @@ class Fetched(NamedTuple):
     totals: dict | None
     # R54 — 시도 검산용. "그 시도에 속하지만 우리 70개 코드에 매핑되지 않는
     # 행들의 합"을 {시도코드: {필드: 값}} 으로 담는다. 시도 축 데이터셋처럼
-    # 개념이 없으면 None. 기본값이 있어 기존 Fetched(rows, totals) 호출은
-    # 그대로 동작한다(시도 검산만 건너뛴다).
+    # 개념 자체가 없으면 None 이다.
+    #
+    # **None 은 "검사를 건너뛴다"는 뜻이 아니다.** 짝이 되는 시도 데이터셋이
+    # 이번 수집에 함께 있는데도 residuals 가 None 이면 run_monthly 가
+    # CheckFailed 를 낸다(totals=None 과 같은 논리, R18). 기본값이 있는 것은
+    # 시도 축·시계열처럼 잔여 개념이 없는 fetcher 가 Fetched(rows, totals) 로
+    # 짧게 쓸 수 있게 하려는 것뿐이고, 그 데이터셋들은 애초에 시도 검산 대상이
+    # 아니다. 새 시군구 fetcher 가 residuals 를 빼먹으면 조용히 통과하는 게
+    # 아니라 시끄럽게 죽는다 — 그게 이 필드의 요점이다.
     residuals: dict | None = None
 
 
