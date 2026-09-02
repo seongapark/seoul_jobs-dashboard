@@ -377,3 +377,37 @@ def test_fetch_grid_returns_normally_when_no_pager_and_row_count_is_not_a_page_b
 
     header, *out_body = rows
     assert len(out_body) == 37
+
+
+# ---------------------------------------------------------------------------
+# Task 7b 후속 확인 (2026-09-02, tools/probe_pagination_dedup_evidence.py) —
+# 262 vs 267 (5개 중복)의 실제 원인을 리터럴 행 텍스트로 확인했다: 5개 모두
+# 서로 다른 행이 아니라 **같은 한 행**(총계) 이 6페이지 전부(1페이지 포함)에
+# 다시 그려진 것이었다. "그룹이 페이지 경계에 걸쳐 헤더가 겹친다"는 원래
+# 가설과는 메커니즘이 다르다(경계뿐 아니라 첫 페이지에도 나타났다) — 그래도
+# 시군구 데이터 행이 아니라 grand-total 핀 행이므로 중복 제거가 맞다는
+# 결론은 같다. 실측 텍스트 그대로 고정한다(합성 placeholder 아님).
+# ---------------------------------------------------------------------------
+
+def test_fetch_grid_collapses_the_pinned_grand_total_row_observed_live():
+    """실측(2026-09-02, (지역별)시군구 단독 배치, 페이저 6페이지, 원시 267/고유
+    262)에서 확인한 유일한 중복 행은 ['총계', '165,821', '1,550,154'] 였고,
+    이 행은 1페이지를 포함해 모든 페이지 맨 위에 동일하게 다시 그려졌다(경계
+    행이 아니라 grand-total 핀 행). 시군구 데이터 행이 아니므로 한 번만
+    남기는 것이 맞다 — 이 실제 텍스트로 그 판단을 고정한다."""
+    total_row = ["총계", "165,821", "1,550,154"]
+    page1 = [total_row] + [[f"region{i}", str(i)] for i in range(49)]
+    page2 = [total_row] + [[f"region{i}", str(i)] for i in range(49, 98)]
+    page3 = [total_row] + [[f"region{i}", str(i)] for i in range(98, 114)]  # 실측처럼 마지막 페이지 17행
+    page = _FakePage(
+        windows=[page1, page2, page3],
+        pager_count=3,
+        header=["(지역별)시군구", "유효구인인원(전체)", "유효구직자수(전체)"],
+    )
+
+    rows = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+
+    header, *body = rows
+    assert header == ["(지역별)시군구", "유효구인인원(전체)", "유효구직자수(전체)"]
+    assert body.count(total_row) == 1  # 3번 중 1번만 남는다 (2개 중복, 경계 2개 이내)
+    assert len(body) == 115  # 114개 고유 지역 + 총계 1개
