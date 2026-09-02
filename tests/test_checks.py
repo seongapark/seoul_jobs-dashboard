@@ -180,3 +180,34 @@ def test_check_against_total_at_most_fails_when_over():
     total = {"vacancy": 29}
     with pytest.raises(checks.CheckFailed):
         checks.check_against_total(rows, total, field="vacancy", mode="at_most")
+
+
+# --- 리뷰 Important 4: 중첩 헤더 전개가 무너지는 모양(빈 축 값)을 직접 막는다 ---
+
+def test_check_axis_values_passes_when_axes_are_filled():
+    rows = [{"sigungu": "11110", "occupation": "경영·행정·사무직"}]
+    checks.check_axis_values(rows, ["sigungu", "occupation"])
+
+
+def test_check_axis_values_fails_on_a_collapsed_cell():
+    """전개가 무너지면 남은 칸이 '' 로 남는다 — 그게 관찰 가능한 형태다."""
+    rows = [{"sigungu": "11110", "occupation": ""}]
+    with pytest.raises(checks.CheckFailed):
+        checks.check_axis_values(rows, ["sigungu", "occupation"])
+
+
+def test_check_axis_values_ignores_fields_that_are_not_this_grids_axes():
+    """vacancy 행의 industry 는 애초에 그 그리드의 축이 아니라 늘 '' 이다 — 오탐 금지."""
+    rows = [{"sigungu": "11110", "occupation": "관리직", "industry": ""}]
+    checks.check_axis_values(rows, ["sigungu", "occupation"])
+
+
+def test_check_sido_coverage_fails_when_a_metro_sido_is_missing():
+    rows = [{"sido": "11"}, {"sido": "41"}]
+    with pytest.raises(checks.CheckFailed):
+        checks.check_sido_coverage(rows, ("11", "41", "28"))
+
+
+def test_check_sido_coverage_passes_when_all_present():
+    rows = [{"sido": "11"}, {"sido": "41"}, {"sido": "28"}, {"sido": "00"}]
+    checks.check_sido_coverage(rows, ("11", "41", "28"))

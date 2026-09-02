@@ -79,6 +79,12 @@ _SIDO_SUFFIX = "_sido"
 _SIGUNGU_CHECKED = ("vacancy", "placement", "insured",
                     "vacancy_industry", "insured_industry")
 
+# 리뷰 Important 4 — mobility 는 시군구 완전성 검사에도 MEASURE_MODES 에도 없어
+# 그물이 check_not_all_zero 하나뿐이었다(한 행만 살아남아도 통과한다). 시도 축
+# 데이터셋이므로 수도권 시도 3개가 다 있는지로 완전성을 본다.
+METRO_SIDO_CODES = ("11", "41", "28")
+_SIDO_CHECKED: dict[str, tuple[str, ...]] = {"mobility": METRO_SIDO_CODES}
+
 
 class Fetched(NamedTuple):
     """fetcher 하나의 결과 — 행과, 그 행들의 합이 맞아야 하는 총계(R18).
@@ -146,6 +152,9 @@ def run_monthly(period, *, out_dir, fetchers, cm, previous=None):
                     f"{name}: 그리드 총계가 없다 — 검산 없이 통과시킬 수 없다")
             for total_field, mode in MEASURE_MODES.get(base, ()):
                 checks.check_against_total(rows, fetched.totals, field=total_field, mode=mode)
+        expected_sido = _SIDO_CHECKED.get(name)
+        if expected_sido:
+            checks.check_sido_coverage(rows, expected_sido)
         checks.check_not_all_zero(rows, field)
         # previous 는 지난달에 파일로 쓴 rows 그대로(raw list)다 — Fetched 로
         # 감싸지 않는다. run_monthly 가 쓰는 파일 자체가 {"rows": [...]} 모양

@@ -163,3 +163,35 @@ def check_name_overlap(names_a, names_b) -> None:
         raise CheckFailed(
             f"이름이 하나도 안 겹친다 — 분류 체계가 달라졌을 수 있다: "
             f"{sorted(names_a)[:3]} vs {sorted(names_b)[:3]}")
+
+
+# ---------------------------------------------------------------------------
+# 리뷰 Important 4 (2026-09-02) — 중첩 세로 헤더 전개가 무너지는 모양을 직접 막는다.
+#
+# olap._EXTRACT_JS 는 중첩 축의 rowspan/colspan 을 펴서 레벨마다 칸을 채우는데,
+# <tr> 이 레벨 수보다 적은 td 를 내면 루프가 멈추고 **남은 칸이 '' 로 남는다.**
+# 그 뒤 fetchers._metro_only 가 '' 을 비수도권 이름으로 보고 버리므로, 지역 축이
+# 무너지면 행이 통째로 사라지고(=시군구 70개 완전성 검사가 잡는다) 지역이 아닌
+# 축(직종·산업)이 무너지면 '' 인 채로 살아남는다 — 그 두 번째 경우를 잡는 검사다.
+# ---------------------------------------------------------------------------
+
+def check_axis_values(rows, fields) -> None:
+    """축 필드가 빈 값인 행이 있으면 실패한다."""
+    for row in rows:
+        blank = [field for field in fields if not str(row.get(field) or "").strip()]
+        if blank:
+            raise CheckFailed(
+                f"축 값이 비어 있다 {blank}: {row} — 중첩 헤더 전개가 무너졌을 수 있다")
+
+
+def check_sido_coverage(rows, expected) -> None:
+    """수도권 시도가 전부 관측됐는지 본다.
+
+    mobility 는 시군구 완전성 검사도 총계 검산도 받지 않는 유일한 데이터셋이라
+    그물이 check_not_all_zero 하나뿐이었는데, 그건 한 행만 살아남아도 통과한다 —
+    반쪽짜리 mobility.json 이 조용히 나갈 수 있었다.
+    """
+    seen = {row.get("sido") for row in rows}
+    missing = sorted(set(expected) - seen)
+    if missing:
+        raise CheckFailed(f"시도 {missing} 가 비었다 — 수집이 반쪽이다")

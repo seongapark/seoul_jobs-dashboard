@@ -60,7 +60,7 @@ from typing import Callable, NamedTuple
 
 import requests
 
-from pipeline import eis, eis_report, layout, olap, series
+from pipeline import checks, eis, eis_report, layout, olap, series
 from pipeline.collect import Fetched
 
 # 달 사이에 두는 간격 (정중함). 24개월 백필이 24회 요청이라 몰아치지 않는다.
@@ -174,6 +174,29 @@ SERIES_SPECS: dict[str, Spec] = {
 # 마감년월은 늘 열 축에 둔다. 그래야 측정값 컬럼에 마감년월 접두가 붙고,
 # `_normalize` 가 그것을 요청한 closYm 과 대조할 수 있다 (실측 1 참고).
 PERIOD_COLUMN = "마감년월"
+
+# 그리드 축 이름 -> 그 축이 만들어 내는 출력 행의 필드 (리뷰 Important 4).
+# 중첩 헤더 전개가 무너지면 채워지지 않은 칸이 '' 로 남는데, 지역 축이 무너진
+# 행은 _metro_only 가 통째로 버려서(=완전성 검사가 잡는다) 눈에 안 띄지만
+# 직종·산업 축이 무너진 행은 '' 인 채로 살아남는다. 그 두 번째 경우를 잡으려면
+# "이 데이터셋이 실제로 요청한 축"이 무엇인지 알아야 한다 — 이 표가 그것이다.
+# (예: vacancy 행의 industry 는 애초에 이 그리드의 축이 아니라 늘 '' 이므로
+# 검사 대상이 아니다. 축만 골라 봐야 오탐이 없다.)
+_OUTPUT_FIELD_OF_AXIS = {
+    "(근무지역)시군구": "sigungu",
+    "(사업장)시군구": "sigungu",
+    "(지역별)시군구": "sigungu",
+    "(근무지역)시도": "sido",
+    "(사업장)시도": "sido",
+    "(지역별)시도": "sido",
+    "직종_중분류": "occupation",
+    "산업_대분류": "industry",
+    "산업(이전)_대분류": "prev_industry",
+}
+
+
+def _axis_fields(spec: Spec) -> list[str]:
+    return [_OUTPUT_FIELD_OF_AXIS[axis] for axis in spec.rows if axis in _OUTPUT_FIELD_OF_AXIS]
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +324,7 @@ def _fetch_monthly(spec: Spec, period: str, *, browser, cm, get, fetch) -> Fetch
     grid = _grid(spec, period, browser=browser, get=get, fetch=fetch)
     body = _metro_only(_normalize(grid.rows, period), spec)
     rows = spec.parse(body, cm) if spec.needs_cm else spec.parse(body)
+    checks.check_axis_values(rows, _axis_fields(spec))
     return Fetched(rows, _totals(_normalize(grid.summaries, period), spec))
 
 
@@ -344,6 +368,7 @@ def _fetch_series(spec: Spec, periods, *, browser, get, fetch, sleep, log) -> li
         try:
             grid = _grid(spec, period, browser=browser, get=get, fetch=fetch)
             month = spec.parse(_metro_only(_normalize(grid.rows, period), spec))
+            checks.check_axis_values(month, _axis_fields(spec))
         except Exception as error:          # noqa: BLE001 — 한 달 실패는 건너뛴다
             failed.append(period)
             log(f"{period} 수집 실패 — 건너뛴다: {error!r}")

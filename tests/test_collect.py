@@ -249,3 +249,23 @@ def test_industry_axis_dataset_fails_without_totals(tmp_path):
     fetchers = {"vacancy_industry": lambda period: Fetched(_full_rows(period), None)}
     with pytest.raises(checks.CheckFailed):
         collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
+
+
+def test_mobility_fails_when_a_metro_sido_is_missing(tmp_path):
+    """리뷰 Important 4 — mobility 는 시군구 완전성도 총계 검산도 안 받는 유일한
+    데이터셋이라 그물이 check_not_all_zero 하나뿐이었다(한 행만 살아남아도 통과).
+    반쪽짜리 mobility.json 이 조용히 나가면 안 된다."""
+    rows = [{"period": "202607", "sido": "11", "industry": "J", "prev_industry": "M",
+             "movers": 10}]
+    fetchers = {"mobility": lambda period: Fetched(rows, None)}
+    with pytest.raises(checks.CheckFailed):
+        collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
+    assert not list(tmp_path.iterdir())
+
+
+def test_mobility_passes_when_all_three_metro_sido_are_present(tmp_path):
+    rows = [{"period": "202607", "sido": sido, "industry": "J", "prev_industry": "M",
+             "movers": 10} for sido in ("11", "41", "28")]
+    fetchers = {"mobility": lambda period: Fetched(rows, None)}
+    summary = collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
+    assert summary["mobility"] == 3

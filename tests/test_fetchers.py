@@ -332,3 +332,16 @@ def test_a_literal_period_column_is_accepted(recorded_layout):
 
     fetched = built["vacancy_sido"]("202607")
     assert fetched.rows[0]["period"] == "202607"
+
+
+def test_collapsed_nested_header_cell_is_rejected(recorded_layout):
+    """리뷰 Important 4 — 중첩 헤더 전개가 무너지면 축 칸이 '' 로 남는다.
+    지역 축이 무너진 행은 _metro_only 가 버려 완전성 검사가 잡지만, 직종 축이
+    무너진 행은 '' 인 채로 살아남는다 — 그건 여기서 잡아야 한다."""
+    rows, summaries = _vacancy_grid()
+    rows[0]["직종_중분류"] = ""            # 전개가 무너진 칸
+    grid = _FakeGrid(result=olap.ParsedGrid(rows, summaries))
+    built = fetchers.monthly_fetchers(browser=object(), cm=_CM(), get=_fake_get(), fetch=grid)
+
+    with pytest.raises(fetchers.checks.CheckFailed):
+        built["vacancy"]("202607")
