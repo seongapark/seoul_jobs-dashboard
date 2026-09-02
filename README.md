@@ -23,7 +23,7 @@ GitHub Actions 워크플로 둘이 `data/*.json` 을 자동으로 채우고 커�
 | 워크플로 | 주기 | 받는 것 |
 | --- | --- | --- |
 | `.github/workflows/collect-monthly.yml` | 매월 5일 10:00 KST | EIS 유효구인구직·취업건수·피보험자·경력직이동(시군구/시도)과 24개월 시계열 |
-| `.github/workflows/collect-halfyear.yml` | 6월 20일·12월 20일 10:00 KST | KOSIS 직종별사업체노동력조사(반기) |
+| `.github/workflows/collect-halfyear.yml` | 6월 20일·12월 20일 10:00 KST | KOSIS 직종별사업체노동력조사(반기) — 직종별 표(`est.json`)와 산업별 표(`est_industry.json`) 둘 |
 
 둘 다 `workflow_dispatch` 로 수동 실행할 수 있습니다. **검사가 실패하면
 워크플로가 0이 아닌 코드로 죽어 커밋 단계가 돌지 않습니다** — 틀린 값이
