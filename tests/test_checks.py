@@ -34,16 +34,16 @@ def test_identical_to_previous_month_fails():
         checks.check_not_identical_to_previous(rows, list(rows))
 
 
-def test_incheon_old_and_new_codes_in_same_month_fail():
-    """중구(28110)와 제물포구(28125)가 같은 달에 함께 값을 가지면 더해질 위험이 있다."""
-    rows = [_row("28110"), _row("28125")]
-    with pytest.raises(checks.CheckFailed) as e:
-        checks.check_incheon_codes(rows)
-    assert "28125" in str(e.value)
-
-
-def test_incheon_new_codes_alone_pass():
-    checks.check_incheon_codes([_row("28125"), _row("28155")])
+def test_incheon_check_is_gone_because_measurement_disproved_it():
+    """R50 — 옛·신 인천 코드가 같은 달에 함께 오는 것이 **정상**임을 실측이 보였다
+    (전부 더해야 시도 값과 맞는다). 그것을 금지하던 check_incheon_codes 는
+    옳은 수집을 막는 검사였으므로 지웠다. 다시 넣으려면 그 실측을 먼저 반박해야
+    한다 — 이 테스트가 그 사실을 붙잡아 둔다. 그 자리는 check_sido_totals 가 대신한다.
+    """
+    assert not hasattr(checks, "check_incheon_codes")
+    assert hasattr(checks, "check_sido_totals")
+    # 완전성 완화에는 여전히 쓰이므로 표 자체는 남아 있어야 한다
+    assert checks.INCHEON_OLD_TO_NEW["28110"] == ["28125", "28155"]
 
 
 def test_est_seam_jump_fails():

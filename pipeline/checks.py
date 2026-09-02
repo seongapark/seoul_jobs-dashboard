@@ -37,16 +37,31 @@ def check_not_identical_to_previous(rows, previous) -> None:
         raise CheckFailed("전월과 완전히 동일하다 — 새 자료가 아니다")
 
 
-def check_incheon_codes(rows) -> None:
-    by_period: dict[str, set[str]] = {}
-    for row in rows:
-        by_period.setdefault(row["period"], set()).add(row["sigungu"])
-    for period, codes in by_period.items():
-        for old, news in INCHEON_OLD_TO_NEW.items():
-            overlap = [n for n in news if n in codes]
-            if old in codes and overlap:
-                raise CheckFailed(
-                    f"{period}: 개편 전 {old} 와 신설 {overlap} 가 함께 있다 — 더하면 이중계상")
+# ---------------------------------------------------------------------------
+# R50 (2026-09-02) — `check_incheon_codes` 는 **실데이터가 반증해서 지웠다.**
+#
+# 그 검사는 "같은 달에 개편 전 코드와 신설 코드가 함께 값을 가지면 더할 때
+# 이중계상이다"라고 봤다. 전제(R17)는 "어느 달이든 EIS 는 한 시대의 코드만
+# 준다"였는데, 실측이 그 전제를 깼다 — 2026년 07월 (근무지역) 축 그리드는 옛
+# 코드와 신설 코드를 **함께** 준다:
+#
+#     28110 중구 (0/1,428) · 28140 동구 (0/405) · 28260 서구 (159/6,282)   [옛]
+#     28125 제물포 (939/243) · 28155 영종 (549/535)
+#     28275 서해 (1,823/1,524) · 28290 검단 (831/736)                      [신설]
+#
+# 그리고 이중계상이 아니다. 인천 시군구를 **전부** 더하고 시도 잔여를 얹으면
+# 시도 값과 정확히 맞는다 (9,268 / 86,627). 신설 코드만 쓰면 구인 159·구직
+# 7,968 이 그냥 사라진다. 즉 두 시대는 **상호배타**이고, 옛 코드에 남은 구직건은
+# 중복이 아니라 아직 이관되지 않은 건이다.
+#
+# 그래서 이 검사는 옳은 수집을 막는 검사였다. 지운 자리는 비워 두지 않았다 —
+# `check_sido_totals`(R54, 아래)가 그 자리를 대신한다. 그쪽이 더 강하다:
+# 옛·신 코드가 겹쳐 정말로 이중계상되면 시도 합이 시도 값을 넘어 바로 걸린다.
+# **다시 넣지 마라** — 넣으려면 위 실측을 먼저 반박해야 한다.
+#
+# `INCHEON_OLD_TO_NEW` 자체는 남는다. collect._effective_expected_codes 가
+# "옛 코드가 다 사라진 미래의 달"에 완전성 기준을 완화하는 데 여전히 쓴다.
+# ---------------------------------------------------------------------------
 
 
 def check_est_seam(rows) -> None:
