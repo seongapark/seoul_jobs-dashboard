@@ -230,21 +230,29 @@ def _labels_after_window_move(page, before: list[str]) -> list[str]:
     return labels
 
 
-def _check_walk_completeness(page_sizes: list[int], visited: int) -> None:
-    """걷기를 멈춘 지점이 정말 마지막 페이지인지 시간과 무관하게 교차검증한다.
+def _check_walk_completeness(page, visited: int, page_count: int) -> None:
+    """걷기를 멈춘 지점이 정말 마지막 페이지인지 **페이저에게 직접 묻는다.**
 
-    마지막 페이지는 보통 꽉 차지 않는다. 마지막으로 읽은 페이지가 정확히
-    `_PAGE_SIZE` 행이면 뒤에 페이지가 더 있는데 멈췄을 가능성이 훨씬 크다 —
-    (페이저 창을 못 넘겼거나 라벨을 늦게 읽었거나) 그 경우 조용히 잘린 결과를
-    반환하는 대신 실패한다. `fetch_grid` 의 "본문이 정확히 50행 배수면 페이저
-    탐지 실패로 본다"는 교차검증과 같은 논법이다.
+    실측(2026-09-02)이 확인한 권위 있는 종료 신호는 하나다 — 마지막 창에서는
+    "다음" 버튼이 아예 사라진다(창 191~200 에서 사라졌고, 그 200페이지가 이
+    그리드의 진짜 끝이었다: 마지막 행 '전북특별자치도 부안군').
+
+    처음엔 "마지막 페이지는 보통 덜 찬다"는 행 수 어림으로 검증했는데, 실측에서
+    이 그리드는 정확히 200페이지 × 50행이라 **마지막 페이지가 꽉 차 있었다** —
+    멀쩡히 끝까지 걷고도 실패하는 오탐이었다. 그래서 어림을 버리고 페이저가
+    스스로 알려주는 신호를 쓴다.
     """
-    if page_sizes and page_sizes[-1] == _PAGE_SIZE:
+    labels = _pager_labels(page)
+    if _PAGER_NEXT_LABEL in labels:
         raise OlapPageWalkError(
-            f"{visited}페이지에서 걷기를 멈췄는데 그 페이지가 정확히 {_PAGE_SIZE}행으로 "
-            f"꽉 차 있다 — 마지막 페이지라면 보통 덜 찬다. 페이저 창을 못 넘겼을 "
-            f"가능성이 크다(총 {len(page_sizes)}페이지 읽음). 잘렸을 수 있는 "
-            "그리드를 반환하지 않는다.")
+            f"{visited}페이지에서 걷기를 멈췄는데 페이저에 아직 "
+            f"'{_PAGER_NEXT_LABEL}' 버튼이 남아 있다 — 뒤에 페이지가 더 있다는 뜻이다 "
+            f"(총 {page_count}페이지 읽음). 잘렸을 수 있는 그리드를 반환하지 않는다.")
+    numbers = [int(text) for text in labels if text.isdigit()]
+    if numbers and visited != max(numbers):
+        raise OlapPageWalkError(
+            f"마지막 창의 최대 페이지({max(numbers)})까지 걷지 못하고 {visited}페이지에서 "
+            f"멈췄다 (총 {page_count}페이지 읽음). 잘렸을 수 있는 그리드를 반환하지 않는다.")
 
 
 def _next_page_number(labels, visited: int):
@@ -390,13 +398,19 @@ def _walk_paginated_grid(
         labels = _pager_labels(page)
         _check_pager_labels(labels)
         page_number = _next_page_number(labels, visited)
-        if page_number is None and _PAGER_NEXT_LABEL in labels:
+        if page_number is None:
+            if _PAGER_NEXT_LABEL not in labels:
+                break                      # 권위 있는 끝 — "다음"이 아예 없다
+            before = labels
             _click_pager_label(page, _PAGER_NEXT_LABEL)
-            labels = _labels_after_window_move(page, labels)
+            labels = _labels_after_window_move(page, before)
             _check_pager_labels(labels)
             page_number = _next_page_number(labels, visited)
-        if page_number is None:
-            break
+            if page_number is None:
+                raise OlapPageWalkError(
+                    f"'{_PAGER_NEXT_LABEL}' 버튼이 있는데 눌러도 {visited}페이지보다 큰 "
+                    f"번호가 나오지 않는다 (창: {labels}) — 창을 못 넘긴 것으로 보고 "
+                    "잘렸을 수 있는 그리드를 반환하지 않는다.")
         if len(page_sizes) >= _MAX_PAGES:
             raise OlapPageWalkError(
                 f"페이지를 {_MAX_PAGES}개까지 걸었는데도 끝이 안 난다 — 페이저가 "
@@ -440,7 +454,7 @@ def _walk_paginated_grid(
         prev_body = body
         visited = page_number
 
-    _check_walk_completeness(page_sizes, visited)
+    _check_walk_completeness(page, visited, len(page_sizes))
 
     for i, size in enumerate(page_sizes[:-1], start=1):
         if size != _PAGE_SIZE:

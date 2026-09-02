@@ -317,8 +317,7 @@ def test_fetch_grid_raises_when_a_duplicated_row_has_an_unknown_label():
     화이트리스트이지, 모르면 통과시키는 블랙리스트가 아니다."""
     dup_row = ["???", "1", "2"]
     page1 = [dup_row] + [[f"row{i}", str(i)] for i in range(49)]
-    # 마지막 페이지는 덜 찬다 (꽉 찬 마지막 페이지는 R47 완전성 검사가 따로 잡는다)
-    page2 = [dup_row] + [[f"row{i}", str(i)] for i in range(49, 89)]
+    page2 = [dup_row] + [[f"row{i}", str(i)] for i in range(49, 98)]
     page = _FakePage(windows=[page1, page2], pager_count=2)
 
     with pytest.raises(olap.OlapPageWalkError) as exc_info:
@@ -475,7 +474,7 @@ def test_fetch_and_parse_grid_round_trips_header_rows_and_summaries():
     데이터 계약을 실제 이음매에서 확인)."""
     total_row = ["총계", "165,821", "1,550,154"]
     page1 = [total_row] + [[f"region{i}", str(i)] for i in range(49)]
-    page2 = [total_row] + [[f"region{i}", str(i)] for i in range(49, 89)]   # 마지막 페이지는 덜 찬다
+    page2 = [total_row] + [[f"region{i}", str(i)] for i in range(49, 98)]
     page = _FakePage(
         windows=[page1, page2],
         pager_count=2,
@@ -487,7 +486,7 @@ def test_fetch_and_parse_grid_round_trips_header_rows_and_summaries():
 
     assert isinstance(result, olap.ParsedGrid)
     assert all(isinstance(d, dict) for d in result.rows)
-    assert {d["(지역별)시군구"] for d in result.rows} == {f"region{i}" for i in range(89)}
+    assert {d["(지역별)시군구"] for d in result.rows} == {f"region{i}" for i in range(98)}
     assert "총계" not in {d["(지역별)시군구"] for d in result.rows}
     assert len(result.summaries) == 1
     assert result.summaries[0] == {
@@ -707,12 +706,12 @@ def test_walk_still_fails_when_the_page_never_rerenders():
         olap.fetch_grid("http://fake", page=page, max_scrolls=10)
 
 
-def test_walk_that_stops_on_a_full_page_fails_instead_of_truncating():
-    """R47 가드 — 창을 못 넘겨 조용히 멈추는 일이 다시 생겨도 잘린 결과를 내지 않는다.
+def test_walk_that_cannot_advance_the_window_fails_instead_of_truncating():
+    """R47 가드 — 창을 못 넘기면 조용히 잘린 결과를 내지 않는다.
 
     실측(2026-09-02): 창 넘김 뒤 라벨을 너무 일찍 읽으면 옛 창을 보고 "더 큰
     번호가 없다 = 끝"이라고 오판해 서울(25개 구)까지만 걷고 성공한 척했다.
-    멈춘 지점이 꽉 찬 페이지면 마지막일 리 없다."""
+    '다음' 이 아직 있는데 더 큰 번호가 안 나오면 그건 끝이 아니라 고장이다."""
     class _StuckWindow(_FakePagedPage):
         def _advance_window(self):
             pass                    # "다음"이 먹지 않는다
@@ -722,7 +721,21 @@ def test_walk_that_stops_on_a_full_page_fails_instead_of_truncating():
     with pytest.raises(olap.OlapPageWalkError) as exc_info:
         olap.fetch_grid("http://fake", page=page, max_scrolls=10)
 
-    assert "꽉 차" in str(exc_info.value)
+    assert "다음" in str(exc_info.value)
+
+
+def test_a_last_page_that_is_exactly_full_is_not_a_failure():
+    """실측 오탐 회귀 — 이 그리드는 정확히 200페이지 × 50행이라 **마지막 페이지가
+    꽉 차 있었다**(마지막 행 '전북특별자치도 부안군'). 처음엔 "마지막 페이지는
+    보통 덜 찬다"는 어림으로 완전성을 봤다가 멀쩡히 끝까지 걷고도 실패했다.
+    끝인지 아닌지는 어림이 아니라 '다음' 버튼의 부재로 판단한다."""
+    pages = [[[f"region{i * olap._PAGE_SIZE + j}", "1"] for j in range(olap._PAGE_SIZE)]
+             for i in range(12)]                    # 12페이지 전부 꽉 참
+    page = _FakePagedPage(pages)
+
+    grid = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+
+    assert len(grid.rows) == 12 * olap._PAGE_SIZE
 
 
 def test_window_labels_that_arrive_late_are_waited_for():
