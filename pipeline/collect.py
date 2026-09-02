@@ -91,7 +91,16 @@ _SIGUNGU_CHECKED = ("vacancy", "placement", "insured",
 # 그물이 check_not_all_zero 하나뿐이었다(한 행만 살아남아도 통과한다). 시도 축
 # 데이터셋이므로 수도권 시도 3개가 다 있는지로 완전성을 본다.
 METRO_SIDO_CODES = ("11", "41", "28")
-_SIDO_CHECKED: dict[str, tuple[str, ...]] = {"mobility": METRO_SIDO_CODES}
+# 시도 축 데이터셋에는 완전성 그물이 아예 없었다. 그게 R54 가 만든 새 사각이다 —
+# check_sido_totals 는 *_sido 행만 순회하므로, 시군구 쪽에 값이 있어도 시도
+# 파일에서 인천 행이 통째로 빠지면 인천은 검산 대상에서 조용히 사라지고
+# 아무도 실패하지 않는다. 시도 파일 자체의 완전성을 여기서 요구해 그 구멍을 막는다.
+_SIDO_CHECKED: dict[str, tuple[str, ...]] = {
+    "mobility": METRO_SIDO_CODES,
+    "vacancy_sido": METRO_SIDO_CODES,
+    "placement_sido": METRO_SIDO_CODES,
+    "insured_sido": METRO_SIDO_CODES,
+}
 
 
 class Fetched(NamedTuple):
@@ -166,7 +175,16 @@ def run_monthly(period, *, out_dir, fetchers, cm, previous=None):
             # 시도 데이터셋이 이번 수집에 함께 있을 때만 돈다(없으면 조용히
             # 건너뛰는 게 아니라 애초에 검산할 상대가 없는 것이다).
             pair = _SIDO_PAIR.get(name)
-            if pair in collected and fetched.residuals is not None:
+            if pair in collected:
+                # residuals=None 을 "검사 건너뜀"으로 다루면 가장 강한 그물이
+                # 조용히 꺼진다 — 새 fetcher 하나가 Fetched(rows, totals) 로만
+                # 돌려주면 시도 검산이 소리 없이 사라진다. 바로 위 totals=None
+                # 과 같은 논리로(R18) 그 자체를 실패로 본다. 짝이 아예 수집되지
+                # 않은 경우는 검산할 상대가 없는 것이라 다르다(위 조건).
+                if fetched.residuals is None:
+                    raise checks.CheckFailed(
+                        f"{name}: 시도 잔여(residuals)가 없다 — {pair} 와 대조할 수 "
+                        "없으니 검산 없이 통과시키지 않는다")
                 for total_field, _ in MEASURE_MODES.get(base, ()):
                     checks.check_sido_totals(rows, fetched.residuals,
                                              collected[pair].rows, field=total_field)

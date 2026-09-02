@@ -28,6 +28,14 @@ def _full_rows(period="202607"):
              "vacancy": 10, "seekers": 100} for code in _REALISTIC_CODES]
 
 
+def _sido_parts(rows, field):
+    """시군구 행을 시도별로 더한다 (테스트가 시도 값을 맞추는 데 쓴다)."""
+    out = {}
+    for row in rows:
+        out[row["sigungu"][:2]] = out.get(row["sigungu"][:2], 0) + row[field]
+    return out
+
+
 def _full_totals():
     """_full_rows() 와 정확히 맞아떨어지는 총계 — vacancy=equality, seekers=at_least."""
     return {"vacancy": 10 * len(_REALISTIC_CODES), "seekers": 100 * len(_REALISTIC_CODES)}
@@ -150,8 +158,14 @@ def test_writes_sido_file_from_separate_collector_not_summed(tmp_path):
         {"period": "202607", "sido": "28", "vacancy": 999, "seekers": 999},
         {"period": "202607", "sido": "00", "vacancy": 999, "seekers": 999},
     ]
+    # 시도 값이 시군구 합과 다른 것이 이 테스트의 요지다 — 그 차이는 잔여로 설명된다
+    # (R54 검산은 시군구합 + 잔여 == 시도값 을 요구한다).
+    rows = _full_rows()
+    residuals = {sido: {"vacancy": 999 - _sido_parts(rows, "vacancy").get(sido, 0),
+                        "seekers": 999 - _sido_parts(rows, "seekers").get(sido, 0)}
+                 for sido in ("11", "41", "28")}
     fetchers = {
-        "vacancy": lambda period: Fetched(_full_rows(period), _full_totals()),
+        "vacancy": lambda period: Fetched(rows, _full_totals(), residuals=residuals),
         "vacancy_sido": lambda period: Fetched(sido_rows, None),
     }
     summary = collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
@@ -165,13 +179,20 @@ def test_writes_sido_file_from_separate_collector_not_summed(tmp_path):
 
 def test_sido_rows_skip_region_completeness_check(tmp_path):
     """시도 행은 시군구 완전성 검사 대상이 아니다 — 애초에 시군구가 아니다."""
+    rows = _full_rows()
+    # 시도 파일에 서울만 있어도 시군구 완전성 검사는 시도 행에 걸리지 않는다.
+    # (시도 파일 자체의 완전성은 아래 별도 테스트가 본다.)
+    sido_rows = [{"period": "202607", "sido": sido, "vacancy": 5, "seekers": 5}
+                 for sido in ("11", "41", "28")]
+    residuals = {sido: {"vacancy": 5 - _sido_parts(rows, "vacancy").get(sido, 0),
+                        "seekers": 5 - _sido_parts(rows, "seekers").get(sido, 0)}
+                 for sido in ("11", "41", "28")}
     fetchers = {
-        "vacancy": lambda period: Fetched(_full_rows(period), _full_totals()),
-        "vacancy_sido": lambda period: Fetched(
-            [{"period": period, "sido": "11", "vacancy": 5, "seekers": 5}], None),
+        "vacancy": lambda period: Fetched(rows, _full_totals(), residuals=residuals),
+        "vacancy_sido": lambda period: Fetched(sido_rows, None),
     }
     summary = collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
-    assert summary["vacancy_sido"] == 1
+    assert summary["vacancy_sido"] == 3
 
 
 def test_writes_nothing_when_sido_check_fails(tmp_path):
@@ -324,3 +345,36 @@ def test_sido_check_is_skipped_when_the_pair_was_not_collected(tmp_path):
     fetchers = {"vacancy": lambda period: Fetched(_full_rows(), _full_totals(), residuals={})}
     summary = collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
     assert summary["vacancy"] == len(_REALISTIC_CODES)
+
+
+def test_missing_residuals_is_a_failure_not_a_skip(tmp_path):
+    """재리뷰 3 — residuals=None 을 '건너뜀'으로 다루면 가장 강한 그물이 조용히
+    꺼진다. totals=None(R18)과 같은 논리로 그 자체를 실패로 본다."""
+    fetchers = {
+        "vacancy": lambda period: Fetched(_full_rows(period), _full_totals()),  # residuals 없음
+        "vacancy_sido": lambda period: Fetched(
+            [{"period": period, "sido": s, "vacancy": 5, "seekers": 5}
+             for s in ("11", "41", "28")], None),
+    }
+    with pytest.raises(checks.CheckFailed) as e:
+        collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
+    assert "residuals" in str(e.value)
+    assert not list(tmp_path.iterdir())
+
+
+def test_sido_file_missing_a_metro_sido_fails(tmp_path):
+    """재리뷰 2 — check_sido_totals 는 시도 파일 행만 순회하므로, 인천 행이 통째로
+    빠지면 인천이 검산에서 조용히 사라진다. 시도 파일 자체의 완전성을 요구한다."""
+    rows = _full_rows()
+    sido_rows = [{"period": "202607", "sido": s, "vacancy": 5, "seekers": 5}
+                 for s in ("11", "41")]                      # 인천이 없다
+    residuals = {s: {"vacancy": 5 - _sido_parts(rows, "vacancy").get(s, 0),
+                     "seekers": 5 - _sido_parts(rows, "seekers").get(s, 0)}
+                 for s in ("11", "41", "28")}
+    fetchers = {
+        "vacancy": lambda period: Fetched(rows, _full_totals(), residuals=residuals),
+        "vacancy_sido": lambda period: Fetched(sido_rows, None),
+    }
+    with pytest.raises(checks.CheckFailed) as e:
+        collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
+    assert "28" in str(e.value)
