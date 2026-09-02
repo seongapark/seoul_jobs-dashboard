@@ -49,6 +49,10 @@ const FILE_OF = {
   // 자치구별·센터별 막대의 라벨용 시군구 코드→이름 표. 이미 저장소에
   // 커밋돼 있어(파이프라인 산출물이 아니다) 아홉 개와 같이 필수로 싣는다.
   sigunguNames: "sigungu_names",
+  // 센터별 화면(Task 14)의 타일 카토그램 배치 — 승인된 목업에서 그대로 뽑은
+  // 70칸 좌표표라 위 둘과 마찬가지로 저장소에 커밋돼 있다(파이프라인 산출물이
+  // 아니다). 파이프라인 배선을 기다릴 이유가 없어 필수로 싣는다.
+  tileLayout: "tile_layout",
 };
 
 // R31 — 마감년월 축 시계열은 수집이 아직 이력을 다 쌓지 못했을 수 있다.
@@ -170,6 +174,18 @@ export function inSido(rows, sido) {
 // 취득·상실…)에 반복해서 구해 화면마다 다시 짜지 않는다.
 export function sumBy(rows, field) {
   return rows.reduce((s, r) => s + (r[field] ?? 0), 0);
+}
+
+// sigunguNames 표의 "서울특별시 종로구" 에서 시도 접두(첫 단어)를 뺀 짧은
+// 이름("종로구")을 낸다 — 480px 폭에서 자치구별 막대·지도 선택 패널 라벨이
+// 전체 이름이면 넘친다. 직종별 화면(Task 12)이 먼저 만들었고 센터별 화면
+// (Task 14)도 그대로 쓰므로 여기로 올렸다 — 화면마다 복사하지 않는다. 표에
+// 없는 코드는 코드를 그대로 보여준다(폴백을 지어내지 않는다).
+export function shortSigunguName(sigunguNames, code) {
+  const full = sigunguNames?.[code];
+  if (!full) return code;
+  const parts = full.split(" ");
+  return parts.length > 1 ? parts.slice(1).join(" ") : full;
 }
 
 // R41(리뷰 지적) — 스위처 선택지는 지역으로 걸러야 한다. 시군구 축 행에는

@@ -6,6 +6,12 @@
   코드와 폐지 코드는 `center_map.json` 에 없는 코드를 걸러내는 방식으로 이미
   제외했다 (70개만 남음). `pipeline/eis.py` 의 `SIGUNGU_NAME_TO_CODE` 가 이 파일을
   임포트 시 한 번 뒤집어서 만든다.
+- `tile_layout.json` — 센터별 화면(Task 14)의 타일 카토그램 좌표표. 사람이 승인한
+  목업(`.superpowers/sdd/2026-09-01-수도권-구인구직-대시보드/tile-layout-from-mockup.tsv`)
+  의 70칸 배치를 그대로 옮긴 것이라 파이프라인 산출물이 아니다 — `sigungu_names.json`
+  과 마찬가지로 이 저장소에 직접 커밋한다. `{code: {row, col, sido, name}}` 모양이고
+  `name` 은 이미 시도 접두를 뗀 짧은 이름이다. 무결성(70개·코드 중복 없음·sido 는
+  11/41/28 뿐)은 `app/tests/tilemap.test.js` 가 이 파일을 직접 읽어 검증한다.
 
 ## 센터 합계의 정의 (R4/R5)
 

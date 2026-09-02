@@ -1,5 +1,5 @@
 import { card, pairCard, bars, collapseCard, esc, num, RATIO_NOTE, insuredBody } from "../components.js";
-import { ratio, hasValue, titleFor, period, half, inSido, sumBy } from "../data.js";
+import { ratio, hasValue, titleFor, period, half, inSido, sumBy, shortSigunguName } from "../data.js";
 
 // 직종별 화면 — 컨트롤러가 다시 쓴 브리프(task-12-brief.md) §전체가 유일한
 // 요구사항이다. 플랜 원문의 카드 3장 스케치는 실데이터 모양과 어긋나(R21~26)
@@ -18,15 +18,8 @@ import { ratio, hasValue, titleFor, period, half, inSido, sumBy } from "../data.
 // true 라 rows.length > 0 과 같다 — "이 시도에 행이 하나라도 있는가"도
 // 같은 함수 하나로 판단해 화면마다 별도 존재-체크를 다시 짜지 않는다.
 
-// sigunguNames 표의 "서울특별시 종로구" 에서 시도 접두(첫 단어)를 뺀 짧은
-// 이름("종로구")을 낸다 — 480px 폭에서 전체 이름은 자치구별 막대 라벨을
-// 넘친다. 표에 없는 코드는 코드를 그대로 보여준다(폴백을 지어내지 않는다).
-function shortSigunguName(sigunguNames, code) {
-  const full = sigunguNames?.[code];
-  if (!full) return code;
-  const parts = full.split(" ");
-  return parts.length > 1 ? parts.slice(1).join(" ") : full;
-}
+// shortSigunguName 은 data.js 로 올라갔다(센터별 화면(Task 14)도 똑같이
+// 필요해져 공용 자리로 옮김) — 화면마다 복사하지 않는다.
 
 export function render(store, selection) {
   const name = selection.occupation;
