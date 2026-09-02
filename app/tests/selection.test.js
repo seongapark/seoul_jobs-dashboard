@@ -4,7 +4,7 @@
 // — app.js 는 top-level 에서 main()이 곧장 돌며 document/fetch 를 찾으므로
 // 노드에서 직접 import 해 테스트할 수 없다. 그래서 이 로직은 data.js 에
 // 두고(순수 함수), app.js 는 그것을 불러 쓰기만 한다.
-import { parseSelection, selectionHash, optionsFor, reconcileForSido, switcherRows } from "../js/data.js";
+import { parseSelection, selectionHash, optionsFor, reconcileForSido, switcherRows, switcherSido } from "../js/data.js";
 
 let failed = 0;
 const eq = (got, want, label) => {
@@ -102,6 +102,18 @@ eq(switcherRows({ vacancy: { rows: vacancyRows } }, "industry"), undefined,
    "산업 축 파일이 없으면 undefined — 부르는 쪽이 select 자체를 안 내도록");
 eq(optionsFor(switcherRows(storeWithIndustry, "industry"), "industry", "11"), ["건설업", "제조업"],
    "스위처 배선을 통째로 이어 보면 산업 목록이 실제로 채워진다");
+
+// --- switcherSido (I5 — 센터별은 지역 select 가 아니라 지도 칩을 따른다) -----
+const SIDO_OF_SCOPE = { 서울: "11", 경기: "41", 인천: "28" };
+eq(switcherSido({ route: "occupation", sido: "41", scope: "수도권" }, SIDO_OF_SCOPE), "41",
+   "직종별에서는 지역 select 를 따른다");
+eq(switcherSido({ route: "center", sido: "11", scope: "경기" }, SIDO_OF_SCOPE), "41",
+   "센터별에서는 지도 칩(scope)을 따른다 — 안 그러면 지도가 통째로 회색이 된다");
+eq(switcherSido({ route: "center", sido: "11", scope: "수도권" }, SIDO_OF_SCOPE), "",
+   "수도권 칩이면 시도를 가리지 않는다(빈 문자열 → 전부 통과)");
+eq(optionsFor(vacancyRows, "occupation", switcherSido({ route: "center", sido: "11", scope: "수도권" }, SIDO_OF_SCOPE)),
+   ["경영·행정·사무직", "생산직", "판매직"],
+   "수도권 칩에서는 세 시도의 직종이 모두 선택지가 된다");
 
 eq(reconcileForSido(vacancyRows, { occupation: "생산직" }, "occupation", "11"), "생산직",
    "새 시도 목록에도 있으면 선택을 그대로 유지한다");

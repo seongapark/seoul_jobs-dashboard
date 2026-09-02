@@ -1,5 +1,7 @@
-import { load, parseSelection, selectionHash, optionsFor, reconcileForSido, switcherRows, staleNotice } from "./data.js";
+import { load, parseSelection, selectionHash, optionsFor, reconcileForSido,
+         switcherRows, switcherSido, staleNotice } from "./data.js";
 import { esc, AXISLINE_HTML } from "./components.js";
+import { SIDO_OF_SCOPE } from "./tilemap.js";
 
 // 지역 선택지는 서울·경기·인천 셋으로 고정한다(R30) — 그 밖의 시도는 이
 // 대시보드 범위 밖이라 파일에도 없다.
@@ -20,9 +22,15 @@ function selectHtml({ id, label, options, value }) {
 // 한 표에 모아 두면 "그 축을 어느 파일에서 뽑는가"(data.switcherRows)와
 // "select 를 어느 id 로 내는가"가 한 자리에서 짝을 이룬다 — C1 은 정확히 그
 // 짝이 두 곳으로 흩어져 어긋난 결함이었다.
+// I5 — 센터별에도 직종 스위처가 붙는다(스펙 §4.4 의 연동 첫째 층: 스위처 →
+// 지도 색·15번 막대 값). 여기 없으면 그 라우트의 selection.occupation 은
+// 영원히 undefined 라 화면이 연동을 구현해도 켤 방법이 없다. 산업은 붙이지
+// 않는다 — 그 카드들의 값이 구인배수인데 스펙 §4.3 이 "구직은 산업 탭에
+// 없다"고 못 박아 산업으로 좁힌 구인배수는 근거가 없다.
 const SWITCHER_AXIS = {
   occupation: { field: "occupation", id: "selOccupation", label: "직종 선택" },
   industry: { field: "industry", id: "selIndustry", label: "산업 선택" },
+  center: { field: "occupation", id: "selOccupation", label: "직종 선택" },
 };
 
 // 라우트별 스위처(R30, 브리프 표): 총괄=지역, 직종별=지역·직종,
@@ -43,7 +51,9 @@ function renderSwitcher(route, store, selection) {
   // select 자체를 내지 않는다 — 옵션 없는 select 는 고장으로 읽힌다.
   const axis = SWITCHER_AXIS[route];
   if (axis) {
-    const options = optionsFor(switcherRows(store, axis.field) ?? [], axis.field, selection.sido)
+    // I5 — 센터별은 지역 select 가 아니라 지도 칩(scope)이 "보고 있는 지역"이다.
+    const optionSido = switcherSido(selection, SIDO_OF_SCOPE);
+    const options = optionsFor(switcherRows(store, axis.field) ?? [], axis.field, optionSido)
       .map((v) => ({ value: v, label: v }));
     if (options.length) {
       selects.push(selectHtml({ id: axis.id, label: axis.label, options, value: selection[axis.field] }));

@@ -4,9 +4,13 @@ import { parseSelection } from "../js/data.js";
 // 센터별 화면 — 컨트롤러가 다시 쓴 브리프(task-14-brief.md) 전체가 유일한
 // 요구사항이다. 다른 화면과 결정적으로 다른 점: EIS 에 센터 축이 아예 없어
 // (판정 R5) 센터 합계는 "관할 시군구 값의 합"으로 정의한다 — row.center 가
-// 이미 센터 이름을 담고 있어 그대로 그룹 키로 쓴다. 그리고 이 화면 전체가
-// selection.occupation/industry 를 안 읽는다 — 이 라우트엔 그 스위처 자체가
-// 없다(app.js 가 지역만 붙인다).
+// 이미 센터 이름을 담고 있어 그대로 그룹 키로 쓴다.
+//
+// I5 — **카드 14·15 는 상단 직종 스위처를 따른다**(스펙 §4.4 의 연동 두 층 중
+// 첫째 층). 예전엔 이 화면 전체가 selection.occupation 을 아예 안 읽었는데,
+// 그건 컨트롤러 브리프가 좁혀서 빠뜨린 것이지 설계가 아니었다. 카드 16 만은
+// 스위처를 따르지 않는다(스펙이 명시) — 아래 불변 검사가 그것을 못 박는다.
+// 직종을 안 고르면 지금처럼 전체를 합산한다.
 //
 // 숫자는 전부 나눗셈이 딱 떨어지게 골랐다(막대 폭 %를 손으로 검산하려고):
 // - 서울고용센터(11110 종로구) 두 직종 행 vacancy 600+400=1000, seekers
@@ -77,9 +81,11 @@ const ok = (cond, label) => {
   else console.log(`ok ${label}`);
 };
 
+// 아래 검사 대부분은 "직종을 안 고른" 상태(전체 합산)를 잰다 — 그것이 첫
+// 진입의 모습이고, 스위처 연동은 그 아래 별도 절에서 잰다.
 const base = {
   route: "center", sido: "11", scope: "수도권",
-  occupation: "상담", industry: undefined, sigungu: undefined, center: undefined,
+  occupation: undefined, industry: undefined, sigungu: undefined, center: undefined,
 };
 
 // 5·6. 선택 패널 — 타일을 눌러 시군구를 고르면 구 이름·센터 이름·대표
@@ -180,6 +186,42 @@ const html16NoIndustry = render({ ...store, vacancyIndustry: undefined }, { ...b
 hasNot(html16NoIndustry, '<div class="subhead">상위 산업</div>', "vacancyIndustry 가 없으면 상위 산업 절이 빠진다");
 has(html16NoIndustry, '<div class="subhead">상위 직종</div>', "상위 산업이 빠져도 상위 직종은 남는다");
 has(html16NoIndustry, "상담", "상위 직종 값 자체는 그대로");
+
+// --- I5. 스펙 §4.4 첫째 층 — 상단 스위처(직종) → 지도 색 · 15번 막대 값 -----
+// 서울고용센터(11110)는 상담 600/300 과 영업 400/100 을 합쳐 1,000/400(배수
+// 2.5)이다. 직종 '상담'을 고르면 그 카드들이 600/300(배수 2)으로 좁혀져야
+// 한다 — 안 그러면 "이 직종의 자리 사정을 구인배수 지도로" 라는 상담 시나리오
+// (스펙이 그린 이 화면의 존재 이유)가 통째로 없는 것이다.
+const withOccupation = { ...base, occupation: "상담" };
+const htmlOcc = render(store, { ...withOccupation, sigungu: "11110" });
+has(htmlOcc, '<dd class="num">600<small>명</small></dd>', "선택 패널 유효구인이 선택 직종만 센다");
+has(htmlOcc, '<dd class="num">300<small>건</small></dd>', "선택 패널 유효구직이 선택 직종만 센다");
+has(htmlOcc, '<dd class="num">2</dd>', "구인배수도 선택 직종 기준(600/300=2)");
+hasNot(htmlOcc, '<dd class="num">1,000<small>명</small></dd>', "전체 합(1,000)이 남아 있지 않다");
+// 제목이 대상을 밝힌다(화면 규칙 2) — 안 그러면 걸러진 지도를 전체로 오독한다.
+has(htmlOcc, "상담 구인배수 지도", "카드 14 제목이 선택 직종을 밝힌다");
+has(htmlOcc, "상담 센터별 구인 · 구직", "카드 15 제목이 선택 직종을 밝힌다");
+
+// 15번 막대 값과 순서가 함께 따라간다: 상담만 보면 강남(800) > 서울(600).
+const htmlOccBars = render(store, withOccupation);
+const jG = htmlOccBars.indexOf('bf__c">서울강남<');
+const jS = htmlOccBars.indexOf('bf__c">서울<');
+ok(jG !== -1 && jS !== -1 && jG < jS,
+  "직종을 고르면 15번 순서가 그 직종 기준으로 바뀐다(강남 800 > 서울 600)");
+
+// 그 직종 행이 아예 없는 센터는 목록에서 빠진다 — 0 을 지어내 그리지 않는다.
+const htmlOnlySeoul = render(store, { ...base, occupation: "영업" });
+has(htmlOnlySeoul, 'bf__c">서울<', "영업 행이 있는 서울고용센터는 남는다");
+hasNot(htmlOnlySeoul, 'bf__c">수원<', "영업 행이 없는 수원고용센터는 15번에서 빠진다");
+
+// 둘째 층(지도 칩)과 함께 걸어도 서로를 지우지 않는다.
+const htmlBoth = render(store, { ...withOccupation, scope: "서울" });
+hasNot(htmlBoth, 'bf__c">수원<', "칩(scope)과 스위처(직종)가 함께 걸린다");
+has(htmlBoth, 'bf__c">서울<', "그 안에서 서울 센터는 그대로 남는다");
+
+// 직종을 안 고르면 지금처럼 전체를 쓴다(위 base 검사들이 그 값을 이미 잰다).
+has(htmlNoSel, "구인배수 지도", "직종을 안 고르면 제목이 그대로다");
+hasNot(htmlNoSel, "상담 구인배수 지도", "직종을 안 고르면 대상 접두가 붙지 않는다");
 
 // 10. 타일과 칩이 data-nav 를 달고, parseSelection 으로 되읽으면 의도한
 // 선택이 나온다. HTML 엔티티(esc()가 '&'를 '&amp;'로 바꾼다)를 풀고

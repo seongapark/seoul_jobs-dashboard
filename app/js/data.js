@@ -260,6 +260,18 @@ export function switcherRows(store, field) {
   return field === "industry" ? store.vacancyIndustry?.rows : store.vacancy.rows;
 }
 
+// I5 — 스위처 선택지를 어느 시도로 거를 것인가. 라우트마다 "지금 보고 있는
+// 지역"을 정하는 것이 다르다: 총괄·직종별·산업별은 지역 select(selection.sido)
+// 지만, 센터별은 **지도 칩(scope)** 이다(그 화면의 카드 14·15 는 selection.sido
+// 를 아예 안 읽는다). 그걸 안 맞추면 scope=경기 로 지도를 보면서 서울에만
+// 있는 직종을 고를 수 있고, 그러면 지도가 통째로 회색이 된다 — R41 이 막으려던
+// "화면이 비어 고장으로 보이는" 실패 그대로다. scope 가 "수도권"이면 특정 시도가
+// 없으므로 ""로 두어 optionsFor 의 startsWith("") 가 전부 통과시키게 한다.
+export function switcherSido(selection, sidoOfScope) {
+  if (selection.route !== "center") return selection.sido;
+  return sidoOfScope[selection.scope] ?? "";
+}
+
 // 시도를 바꾸면 optionsFor 의 목록이 통째로 달라진다. 지금 선택이 새
 // 목록에도 있으면 그대로 두고, 없으면(다른 시도에만 있던 값) 조용히 빈
 // 화면이 되는 대신 새 목록의 첫 값으로 떨어뜨린다(목록이 비어 있으면

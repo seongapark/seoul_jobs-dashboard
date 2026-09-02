@@ -11,11 +11,23 @@ import { render as renderTiles, SIDO_OF_SCOPE } from "../tilemap.js";
 // (판정 R5). 그래서 "센터 합계"는 그 센터가 관할하는 시군구 값의 합으로
 // 정의한다 — row.center 가 이미 센터 이름을 담고 있어 그대로 그룹 키로
 // 쓴다("분해합으로 총계를 대체하지 않는다"는 시도·전국 총계에만 걸리고
-// (R5), 센터 집계에는 안 걸린다). 그리고 이 라우트엔 직종/산업 스위처
-// 자체가 없다(app.js 의 renderSwitcher 가 지역만 붙인다) — 그래서 카드
-// 14·15·16 모두 selection.occupation/industry 를 전혀 읽지 않고 시군구
-// 원자료 전체(모든 직종·산업)를 합산한다. 카드 16 만 별도로 그 이유가
-// 명시돼 있지만(스펙 §4.4), 실은 이 화면 전체가 처음부터 그 축을 안 본다.
+// (R5), 센터 집계에는 안 걸린다).
+//
+// I5 — 스펙 §4.4 의 연동은 **두 층**이다:
+//   1) 상단 스위처(직종) → 지도 색, 15번 막대 값
+//   2) 지도 칩(scope)    → 지도 범위, 15번의 센터 목록
+// 예전 구현은 1층이 통째로 없어 selection.occupation 을 아예 안 읽었고,
+// 그래서 스펙이 그린 상담 시나리오("이 직종의 자리 사정을 구인배수 지도로")
+// 가 성립하지 않았다. 직종을 안 고르면(첫 진입) 전체를 합산한다 — 그게
+// "수도권 전체 자리 사정"이라는 자연스러운 기본값이다.
+//
+// **카드 16 만은 스위처를 따르지 않는다**(스펙이 명시). 그 카드는 "그 센터
+// 전체의 상위 산업·직종"을 보는 것이라 축을 하나로 좁히면 의미가 없다 —
+// 그래서 아래에서 걸러진 rows 가 아니라 store.vacancy.rows 원본을 쓴다.
+//
+// 산업 축은 이번 판에서 연동하지 않는다: 카드 14·15 의 값은 구인배수인데
+// 스펙 §4.3 이 "구직은 산업 탭에 없다(유효구직에 산업 축 없음)"고 못 박아,
+// 산업으로 좁힌 구인배수는 근거가 없다. 직종 축만 건다.
 
 const SCOPE_CHIPS = ["수도권", "서울", "경기", "인천"];
 // SIDO_OF_SCOPE 는 tilemap.js 가 갖고 여기가 import 한다(Task 16) — 사본을
@@ -57,12 +69,25 @@ function aggregate(rows) {
 export function render(store, selection) {
   const cards = [];
   const scopeSido = SIDO_OF_SCOPE[selection.scope];
-  const { bySigungu, byCenter } = aggregate(store.vacancy.rows);
+
+  // I5 1층 — 카드 14·15 가 보는 행. 직종을 고르면 그 직종만, 안 고르면 전체.
+  // 그 직종 행이 없는 시군구·센터는 집계에서 아예 빠진다 — 0 을 지어내
+  // 그리면 지도가 "값이 0인 곳"과 "그 직종이 없는 곳"을 같은 색으로 만든다.
+  const occupation = selection.occupation;
+  const selectedRows = occupation
+    ? store.vacancy.rows.filter((r) => r.occupation === occupation)
+    : store.vacancy.rows;
+  // 제목은 대상을 밝힌다(화면 규칙 2) — 안 그러면 걸러진 지도를 전체로 오독한다.
+  const titleOf = (suffix) => occupation ? esc(titleFor(occupation, suffix)) : suffix;
+
+  const { bySigungu, byCenter } = aggregate(selectedRows);
 
   // 타일 코드 -> 센터 이름. 지도에서 시군구를 고르면 그 센터도 함께
   // 골라지도록(카드 16이 selection.center 를 읽는다) 타일 한 번 순회로
   // 만들어 둔다 — 시군구 코드로 store.vacancy.rows 를 매번 find() 하지
-  // 않는다.
+  // 않는다. **여기는 걸러지지 않은 원본을 쓴다**(I5): 시군구→센터 관할은
+  // 직종과 무관한 사실이라, 선택 직종 행이 없는 구를 눌렀다고 그 구의
+  // 센터가 사라지면 안 된다.
   const centerOfSigungu = new Map();
   for (const r of store.vacancy.rows) {
     if (!centerOfSigungu.has(r.sigungu)) centerOfSigungu.set(r.sigungu, r.center);
@@ -71,7 +96,7 @@ export function render(store, selection) {
   // 카드 14 — 구인배수 지도 (감춤: vacancy 행이 없을 때). 대상이 없는
   // 카드가 아니라 지도 자체가 대상이라 화면 규칙 2 그대로 "구인배수
   // 지도"로 시작한다.
-  if (hasValue(store.vacancy.rows, {})) {
+  if (hasValue(selectedRows, {})) {
     const values = {};
     for (const [code, sums] of bySigungu) {
       const r = ratio(sums.vacancy, sums.seekers);
@@ -124,7 +149,7 @@ export function render(store, selection) {
       </div>`).join("");
 
     cards.push(card({
-      title: '<span class="pin">14</span>구인배수 지도',
+      title: `<span class="pin">14</span>${titleOf("구인배수 지도")}`,
       badge: period(store.vacancy.period),
       body: `<div class="chips">${chips}</div>
         ${mapHtml}
@@ -135,8 +160,9 @@ export function render(store, selection) {
   }
 
   // 카드 15 — 센터별 구인 · 구직 (감춤: 센터 행이 없을 때 — vacancy 행이
-  // 있으면 항상 row.center 도 있으므로 카드 14와 같은 조건이다).
-  if (hasValue(store.vacancy.rows, {})) {
+  // 있으면 항상 row.center 도 있으므로 카드 14와 같은 조건이다). 카드 14 와
+  // 같은 selectedRows 를 본다(I5 1층).
+  if (hasValue(selectedRows, {})) {
     const selectedCenter = selection.sigungu ? centerOfSigungu.get(selection.sigungu) : undefined;
 
     const items = [...byCenter.entries()]
@@ -158,7 +184,7 @@ export function render(store, selection) {
     }).join("");
 
     cards.push(card({
-      title: '<span class="pin">15</span>센터별 구인 · 구직',
+      title: `<span class="pin">15</span>${titleOf("센터별 구인 · 구직")}`,
       badge: period(store.vacancy.period),
       body: `<div class="bf">
         <div class="bf__head l">유효구인</div>
