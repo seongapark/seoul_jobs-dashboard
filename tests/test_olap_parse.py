@@ -245,29 +245,6 @@ def test_fetch_grid_raises_when_a_later_page_returns_zero_body_rows():
     assert "2페이지" in str(exc_info.value)
 
 
-# ---------------------------------------------------------------------------
-# Task 7b Fix round 1 (R12) — 라이브 검증(6페이지, 원시 267 vs 고유 262)이
-# 밝힌 것: 경계당 반복 헤더 행 하나는 DevExtreme PivotGrid 의 정상 동작이다.
-# "원시==고유" 엄격한 동등성 대신 "중복 <= 경계 수(pager_count-1)" 상한으로
-# 검증한다.
-# ---------------------------------------------------------------------------
-
-def test_fetch_grid_returns_distinct_rows_when_each_page_repeats_one_header_row():
-    """경계마다 그룹 헤더 행이 한 번씩 반복되는 정상 상황(2경계 x 중복 1개씩
-    =2, 페이지 3개 → 허용 상한 2와 정확히 같음)에서는 실패하지 않고 고유 행만
-    돌려줘야 한다."""
-    page1 = [[f"row{i}", str(i)] for i in range(50)]
-    page2 = [["row0", "0"]] + [[f"row{i}", str(i)] for i in range(50, 99)]      # 경계1 중복 1개
-    page3 = [["row50", "50"]] + [[f"row{i}", str(i)] for i in range(99, 121)]   # 경계2 중복 1개
-    page = _FakePage(windows=[page1, page2, page3], pager_count=3)
-
-    rows = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
-
-    header, *body = rows
-    assert len(body) == 121  # 원시 50+50+23=123 - 중복 2개
-    assert len({r[0] for r in body}) == 121  # 전부 고유
-
-
 def test_fetch_grid_raises_when_a_page_contributes_no_new_rows_even_if_reordered():
     """이전 페이지와 완전히 똑같은 리스트는 아니어도(순서만 다름) 새 행을
     하나도 못 보태면 "안 넘어간 것"과 똑같이 취급해 실패해야 한다 — 이전
@@ -282,23 +259,67 @@ def test_fetch_grid_raises_when_a_page_contributes_no_new_rows_even_if_reordered
     assert "새 행을 하나도 보태지" in str(exc_info.value)
 
 
-def test_fetch_grid_raises_when_duplicate_count_exceeds_page_boundaries():
-    """중복 3개인데 경계는 2개뿐(페이지 3개)이면 "경계당 반복 헤더 1개"로 설명이
-    안 된다 — 원인 모를 손실/중복으로 보고 여전히 시끄럽게 실패해야 한다."""
-    page1 = [[f"row{i}", str(i)] for i in range(50)]
-    page2 = (
-        [["row0", "0"], ["row1", "1"]]
-        + [[f"row{i}", str(i)] for i in range(50, 98)]
-    )  # 경계1 중복 2개
-    page3 = [["row50", "50"]] + [[f"row{i}", str(i)] for i in range(98, 120)]  # 경계2 중복 1개
+# ---------------------------------------------------------------------------
+# Task 7b Fix round 3 (컨트롤러 R13/R14, 2026-09-02) — 개수 기반 상한
+# ("중복 <= pager_count-1")은 실측(총계 행이 매 페이지에 고정 반복)에서
+# 우연히 통과했을 뿐 원리적 근거가 없었다. 정체성 기반 규칙("중복된 행의
+# 첫 칸이 알려진 요약 라벨인가")으로 교체했다.
+# ---------------------------------------------------------------------------
+
+def test_fetch_grid_raises_when_a_duplicated_row_is_not_a_known_summary_label():
+    """R14: 페이지를 넘나들며 반복된 행이 있는데(예: 시군구 데이터 행 '강남구'가
+    1·2페이지에 그대로 다시 나타남) 그 첫 칸이 알려진 요약 라벨이 아니면,
+    옛 개수 기반 상한(중복 1개 <= 경계 2개)이었다면 조용히 통과시켰을
+    상황이다 — 새 규칙은 개수가 아니라 정체성을 보므로, 이 데이터 행 중복을
+    놓치지 않고 그 행을 이름 붙여 예외를 낸다."""
+    dup_row = ["강남구", "1", "2"]
+    page1 = [dup_row] + [[f"row{i}", str(i)] for i in range(49)]
+    page2 = [dup_row] + [[f"row{i}", str(i)] for i in range(49, 98)]
+    page3 = [[f"row{i}", str(i)] for i in range(98, 120)]
     page = _FakePage(windows=[page1, page2, page3], pager_count=3)
 
-    with pytest.raises(olap.OlapPaginationError) as exc_info:
+    with pytest.raises(olap.OlapPageWalkError) as exc_info:
         olap.fetch_grid("http://fake", page=page, max_scrolls=10)
 
     msg = str(exc_info.value)
-    assert "3" in msg  # 실제 중복 개수
-    assert "2" in msg  # 허용 상한 (pager_count - 1)
+    assert "강남구" in msg
+    assert "[1, 2]" in msg or ("1" in msg and "2" in msg)  # 등장 페이지
+
+
+def test_fetch_grid_raises_when_a_duplicated_row_has_an_unknown_label():
+    """R14: 반복된 행의 첫 칸이 '???' 처럼 전혀 모르는 라벨이면(총계/소계/합계/
+    전체 어디에도 없음) 역시 개수와 무관하게 예외를 낸다 — 요약 라벨 목록은
+    화이트리스트이지, 모르면 통과시키는 블랙리스트가 아니다."""
+    dup_row = ["???", "1", "2"]
+    page1 = [dup_row] + [[f"row{i}", str(i)] for i in range(49)]
+    page2 = [dup_row] + [[f"row{i}", str(i)] for i in range(49, 98)]
+    page = _FakePage(windows=[page1, page2], pager_count=2)
+
+    with pytest.raises(olap.OlapPageWalkError) as exc_info:
+        olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+
+    assert "???" in str(exc_info.value)
+
+
+def test_fetch_grid_does_not_raise_when_summary_rows_outnumber_page_boundaries():
+    """R14: 총계와 소계가 둘 다 페이지마다(3페이지 전부) 고정 반복되면 중복이
+    4개인데 경계는 2개뿐(옛 상한 pager_count-1=2)이다 — 옛 개수 기반 상한이면
+    실패했을 상황이지만, 새 규칙은 정체성(둘 다 알려진 요약 라벨)만 보므로
+    실패하지 않는다. 옛 상한이 실제로 사라졌다는 증거다."""
+    total_row = ["총계", "100", "200"]
+    subtotal_row = ["소계", "10", "20"]
+    page1 = [total_row, subtotal_row] + [[f"row{i}", str(i)] for i in range(48)]
+    page2 = [total_row, subtotal_row] + [[f"row{i}", str(i)] for i in range(48, 96)]
+    page3 = [total_row, subtotal_row] + [[f"row{i}", str(i)] for i in range(96, 119)]
+    page = _FakePage(windows=[page1, page2, page3], pager_count=3)
+
+    rows = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+
+    header, *body = rows
+    assert total_row not in body
+    assert subtotal_row not in body
+    assert len(body) == 119  # 고유 데이터 행만 (요약 행 둘은 본문에서 빠진다)
+    assert {tuple(r) for r in rows.summaries} == {tuple(total_row), tuple(subtotal_row)}
 
 
 def test_fetch_grid_raises_when_a_non_last_page_is_short():
@@ -393,8 +414,10 @@ def test_fetch_grid_collapses_the_pinned_grand_total_row_observed_live():
     """실측(2026-09-02, (지역별)시군구 단독 배치, 페이저 6페이지, 원시 267/고유
     262)에서 확인한 유일한 중복 행은 ['총계', '165,821', '1,550,154'] 였고,
     이 행은 1페이지를 포함해 모든 페이지 맨 위에 동일하게 다시 그려졌다(경계
-    행이 아니라 grand-total 핀 행). 시군구 데이터 행이 아니므로 한 번만
-    남기는 것이 맞다 — 이 실제 텍스트로 그 판단을 고정한다."""
+    행이 아니라 grand-total 핀 행). R13(Fix round 3): 시군구 데이터 행이
+    아니므로 본문에 섞지 않고 완전히 빼서 `.summaries` 에 한 번만 담아
+    돌려줘야 한다(데이터 계약 — 총계는 분해값을 더해 만들지 않고 총계 행에서
+    받는다) — 이 실제 텍스트로 그 판단을 고정한다."""
     total_row = ["총계", "165,821", "1,550,154"]
     page1 = [total_row] + [[f"region{i}", str(i)] for i in range(49)]
     page2 = [total_row] + [[f"region{i}", str(i)] for i in range(49, 98)]
@@ -409,5 +432,6 @@ def test_fetch_grid_collapses_the_pinned_grand_total_row_observed_live():
 
     header, *body = rows
     assert header == ["(지역별)시군구", "유효구인인원(전체)", "유효구직자수(전체)"]
-    assert body.count(total_row) == 1  # 3번 중 1번만 남는다 (2개 중복, 경계 2개 이내)
-    assert len(body) == 115  # 114개 고유 지역 + 총계 1개
+    assert total_row not in body  # 본문에는 총계가 섞이지 않는다 (R13)
+    assert len(body) == 114  # 114개 고유 지역만
+    assert rows.summaries == [total_row]  # 총계는 한 번만, 별도로

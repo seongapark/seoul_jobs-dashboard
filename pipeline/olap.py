@@ -31,18 +31,36 @@ Task 7b (2026-09-01): 그 후속 작업 — 페이지네이션 누적을 구현�
   (`_walk_paginated_grid`). 실패는 여전히 시끄럽다 — 페이지 클릭이 행을 못
   바꾸면, 어느 페이지가 새 행을 하나도 못 보태면, 어느 페이지가 데이터 행을
   하나도 안 주면(`OlapExtractionError`), 마지막이 아닌 페이지가 `_PAGE_SIZE`
-  와 다르면, 또는 중복 행 수가 페이지 경계 수(pager_count-1)를 넘으면 모두
-  `OlapPageWalkError` 를 낸다. 잘린 그리드를 반환하는 대신 예외를 낸다는 원칙은
-  그대로다.
+  와 다르면, 또는 페이지를 넘나들며 반복된 행이 알려진 요약 라벨이 아니면
+  (R14, 아래 Fix round 3 참고) 모두 `OlapPageWalkError` 를 낸다. 잘린 그리드를
+  반환하는 대신 예외를 낸다는 원칙은 그대로다.
 
 Task 7b Fix round 1 (2026-09-01, 컨트롤러 R12): 처음엔 "원시 합계 == 고유 행
   수"라는 엄격한 동등성으로 완전성을 검증했는데, 라이브 사이트 실측(6페이지,
   원시 267행 vs 고유 262행)이 이 체크가 실데이터에서 절대 통과 못 함을
-  보였다 — 그룹이 페이지 경계에 걸치면 DevExtreme PivotGrid 가 그 그룹의
-  헤더 행을 다음 페이지 맨 위에 다시 그린다(경계당 정확히 1개, 5경계=5중복
-  이 정확히 들어맞았다). 이건 데이터 손실이 아니라 정상 렌더링이다. 그래서
-  동등성 대신 "중복 <= 경계 수(pager_count-1)" 상한으로 바꿨다 — 경계당
-  중복 최대 1개는 정상, 그 이상은 원인 불명의 손실/중복으로 여전히 실패한다.
+  보였다. 그때는 원인을 "그룹이 페이지 경계에 걸치면 DevExtreme PivotGrid 가
+  그 그룹의 헤더 행을 다음 페이지 맨 위에 다시 그린다"고 추정해 동등성 대신
+  "중복 <= 경계 수(pager_count-1)" 상한으로 바꿨다 — 이 추정은 **틀렸다**
+  (아래 Fix round 2 참고).
+
+Task 7b Fix round 2 (2026-09-02, tools/probe_pagination_dedup_evidence.py):
+  리터럴 행 텍스트로 실측했더니 5개 중복은 서로 다른 5개 그룹 헤더가 아니라
+  **같은 한 행**이 6페이지 전부(1페이지 포함, 경계와 무관)에 반복된 것이었다:
+  `['총계', '165,821', '1,550,154']`. 즉 그룹 헤더가 페이지 경계에 걸쳐
+  다시 그려지는 게 아니라, 그랜드토탈(총계) 행이 매 페이지 맨 위에
+  **고정(pinned)** 되어 렌더된다. "중복 <= 경계 수" 상한은 이 사례에서
+  숫자상 우연히(5=5) 통과했을 뿐이다 — 시군구 데이터 행 두 개가 우연히 값이
+  같아 중복으로 잡혔어도 똑같이 통과시켰을 것이므로, 개수 기반 상한 자체가
+  원리적으로 근거가 없었다.
+
+Task 7b Fix round 3 (2026-09-02, 컨트롤러 R13/R14): 그래서 개수 기반 상한을
+  버리고 **정체성 기반** 규칙으로 바꿨다 — 중복된 행은 그 첫 칸이 알려진
+  요약 라벨(`_SUMMARY_ROW_LABELS`: 총계/소계/합계/전체)일 때만 허용한다.
+  모르는 라벨이 반복되면(=그리드 구조를 이해하지 못했다는 뜻) 개수와
+  무관하게 시끄럽게 실패한다(R14). 그리고 이 프로젝트의 데이터 계약("유효
+  구직건수의 분해값을 더해 총계로 쓰지 않는다 — 총계는 총계 행에서 받는다")을
+  실제로 지킬 수 있도록, 허용된 요약 행은 본문에서 빼 별도로
+  (`_WithSummaries.summaries`) 돌려준다(R13) — 조용히 버리지 않는다.
 """
 from __future__ import annotations
 
@@ -82,9 +100,18 @@ class OlapPageWalkError(OlapPaginationError):
     막기 위함이다:
       - 페이지 버튼을 클릭해 다음 페이지로 이동을 시도했는데 렌더된 행이 이전
         페이지와 똑같다 (클릭이 페이지를 못 넘겼을 가능성).
+      - 어느 페이지가 새 행을 하나도 보태지 못했다 (순서만 바뀌었거나 다른
+        페이지와 겹쳤을 가능성 — 위 항목보다 일반적인 체크).
       - 마지막 페이지가 아닌 페이지가 본문 행 수 `_PAGE_SIZE` 와 다르다.
-      - 전 페이지를 다 걸은 뒤 고유 행 총수가 페이저가 암시하는 총합
-        ((페이지수-1) x `_PAGE_SIZE` + 마지막 페이지 행 수) 과 다르다.
+      - 페이지를 넘나들며 반복된 행이 있는데, 그 첫 칸이 알려진 요약 행 라벨
+        (`_SUMMARY_ROW_LABELS`: 총계/소계/합계/전체)이 아니다 (R14). 실측
+        (2026-09-02, tools/probe_pagination_dedup_evidence.py)으로 확인된 진짜
+        원인은 "그룹 헤더가 페이지 경계에 걸쳐 다시 그려진다"가 아니라,
+        **그랜드토탈(총계) 행이 매 페이지 맨 위에 고정(pinned)되어 반복
+        렌더된다**는 것이었다 — 알려진 요약 라벨의 반복은 정상으로 보고
+        통과시키되 본문에서 빼 `.summaries` 로 돌려주고(R13), 모르는 라벨의
+        반복은 원인 불명의 손실/중복으로 보고 그 행과 등장 페이지를 그대로
+        이름 붙여 예외를 낸다.
     """
 
 
@@ -97,20 +124,45 @@ def _click_page(page, page_number: int) -> None:
     page.locator(_PAGER_SELECTOR).nth(page_number - 1).click()
 
 
+# 실측(2026-09-02, tools/probe_pagination_dedup_evidence.py)으로 확인된 EIS
+# 페이지네이션 그리드의 요약 행 라벨 — 이 행들은 매 페이지 맨 위에 고정
+# (pinned)되어 반복 렌더된다. 이 목록에 없는 라벨이 페이지를 넘나들며
+# 반복되면(=진짜 데이터 행이 중복/손실됐을 수 있음) 개수와 무관하게 시끄럽게
+# 실패한다 — 새로운 요약 라벨을 실측으로 확인하기 전에는 여기 추가하지 않는다.
+_SUMMARY_ROW_LABELS = frozenset({"총계", "소계", "합계", "전체"})
+
+
+class _WithSummaries(list):
+    """`_walk_paginated_grid` 의 반환 타입.
+
+    평범한 list[list[str]] 그대로 동작해(`header, *body = rows` 기존 언패킹과
+    100% 호환) 본문은 `[header, *data_rows]`(요약 행 제외)다. 그와 별도로
+    `.summaries` 속성에 본문에서 뺀 요약 행(총계 등, R13)을 담아 돌려준다 —
+    데이터 계약("총계는 총계 행에서 받는다")을 지키려면 본문에서 빼야 하지만,
+    조용히 버리면 안 되기 때문이다. 요약 행이 없으면 빈 리스트.
+    """
+
+    summaries: list[list[str]]
+
+
 def _walk_paginated_grid(
     page, *, header: list[str], first_body: list[list[str]], pager_count: int
-) -> list[list[str]]:
+) -> _WithSummaries:
     """`.dx-datagrid-pager` 페이지 버튼을 순서대로 눌러가며 전 페이지를 누적한다.
 
     fetch_grid 가 이미 1페이지째를 읽어(header, first_body) pager_count>1 임을
     확인한 뒤에만 호출한다. 페이지 사이 `_PAGE_ADVANCE_WAIT_MS` 만큼 쉰다(정중함).
 
-    반환은 두 가지 독립된 기준으로 완전성이 확인된 경우에만:
-      1. 페이지 이동마다 실제로 행이 바뀌었는가 (안 바뀌면 클릭이 안 먹은 것).
-      2. 마지막 페이지를 제외한 모든 페이지가 정확히 `_PAGE_SIZE` 행인가, 그리고
-         다 걷은 뒤 고유 행 총수가 페이저가 "암시하는" 총합
-         ((pager_count-1) x `_PAGE_SIZE` + 마지막 페이지 행 수) 과 정확히 같은가.
-    어느 쪽이든 안 맞으면 조용히 넘어가지 않고 예외를 낸다.
+    반환(`_WithSummaries`, list[list[str]] 호환)은 여러 독립된 기준으로
+    완전성이 확인된 경우에만 이뤄진다:
+      1. 페이지 이동마다 실제로 새 행이 보태졌는가 (안 그러면 클릭이 안 먹었거나
+         이전/다른 페이지와 겹친 것).
+      2. 마지막 페이지를 제외한 모든 페이지가 정확히 `_PAGE_SIZE` 행인가.
+      3. 페이지를 넘나들며 반복된 행이 있다면, 그 행의 첫 칸이 알려진 요약 라벨
+         (`_SUMMARY_ROW_LABELS`)인가 (R14) — 개수가 아니라 정체성으로 판단한다.
+         아니면 그 행과 등장 페이지를 그대로 이름 붙여 예외를 낸다.
+    허용된 요약 행(총계 등)은 본문에서 빼 반환값의 `.summaries` 로 따로
+    담는다(R13). 어느 기준이든 안 맞으면 조용히 넘어가지 않고 예외를 낸다.
     """
     if pager_count < 2:
         # 호출부(fetch_grid)가 이미 pager_count>1 일 때만 부르므로 정상 경로에서는
@@ -128,9 +180,17 @@ def _walk_paginated_grid(
         )
 
     seen: dict[str, list[str]] = {}
+    occurrences: dict[str, list[int]] = {}
+
+    def _record(row: list[str], page_number: int) -> None:
+        if not row:
+            return
+        key = "".join(row)
+        seen[key] = row
+        occurrences.setdefault(key, []).append(page_number)
+
     for row in first_body:
-        if row:
-            seen["".join(row)] = row
+        _record(row, 1)
 
     prev_body = first_body
     page_sizes = [len(first_body)]
@@ -157,8 +217,7 @@ def _walk_paginated_grid(
 
         before = len(seen)
         for row in body:
-            if row:
-                seen["".join(row)] = row
+            _record(row, page_number)
         if len(seen) == before:
             # body != prev_body(위에서 이미 확인) 인데도 새 행이 하나도 안
             # 보태졌다 — 인접 페이지와 똑같지는 않지만(예: 순서만 바뀌었거나
@@ -181,28 +240,40 @@ def _walk_paginated_grid(
                 "수 있다."
             )
 
-    # Task 7b Fix round 1 (컨트롤러 지시 R12): "원시 합계 == 고유 행 수" 라는
-    # 엄격한 동등성 체크는 실데이터에서 항상 걸린다 — 실측(라이브 사이트,
-    # (지역별)시군구 단독 배치, 페이지 6개): 원시 267행, 고유 262행, 딱
-    # 5개(=경계 수 5 = 페이지 수 6 - 1) 차이가 났다. DevExtreme PivotGrid 는
-    # 그룹이 페이지 경계에 걸치면 그 그룹의 헤더 행을 다음 페이지 맨 위에
-    # 다시 그린다 — 경계당 반복 헤더 행 하나는 정상 동작이다. 그래서
-    # "중복이 0이어야 한다"가 아니라 "중복이 페이지 경계 수(pager_count - 1)
-    # 를 넘으면 안 된다"는 상한으로 검증한다. 경계 수보다 많은 중복은 반복
-    # 헤더만으로 설명되지 않으므로 원인 불명의 손실/중복으로 보고 여전히
-    # 시끄럽게 실패한다.
-    total_raw = sum(page_sizes)
-    duplicates = total_raw - len(seen)
-    max_allowed_duplicates = pager_count - 1  # 경계 수 = 페이지 수 - 1
-    if duplicates > max_allowed_duplicates:
+    # Task 7b Fix round 3 (컨트롤러 R14): 중복은 "몇 개까지 봐줄까"가 아니라
+    # "무엇인가"로 판단한다. 실측(2026-09-02,
+    # tools/probe_pagination_dedup_evidence.py)이 밝힌 진짜 원인은 그룹 헤더가
+    # 페이지 경계에 걸쳐 다시 그려지는 게 아니라, 그랜드토탈(총계) 행이 매
+    # 페이지 맨 위에 고정(pinned)되어 반복 렌더된다는 것이었다 — 옛 "중복 <=
+    # 경계 수" 상한은 이번 사례(5중복=5경계)에서 숫자상 우연히 통과했을
+    # 뿐이다. 그래서 중복된 행의 첫 칸이 알려진 요약 라벨
+    # (_SUMMARY_ROW_LABELS)이면 통과시키고, 아니면(=실제 데이터 행이 반복됨)
+    # 개수와 무관하게 그 행과 등장 페이지를 그대로 이름 붙여 예외를 낸다 —
+    # 반복된 데이터 행은 그리드 구조를 이해하지 못했다는 뜻이므로 조용히
+    # 넘어가지 않는다.
+    summaries: dict[str, list[str]] = {}
+    for key, pages in occurrences.items():
+        if len(pages) <= 1:
+            continue
+        row = seen[key]
+        if row[0] in _SUMMARY_ROW_LABELS:
+            summaries[key] = row
+            continue
         raise OlapPageWalkError(
-            f"누적 고유 행 수({len(seen)})와 원시 합계({total_raw}) 사이의 "
-            f"중복({duplicates}개)이 페이지 경계 수({max_allowed_duplicates} = "
-            f"페이지 {pager_count}개 - 1)를 넘는다 — 경계당 반복 헤더 행 "
-            "하나는 정상이지만 그 이상은 원인을 모르는 손실/중복일 수 있다."
+            f"중복된 행이 있는데 알려진 요약 행 라벨"
+            f"({sorted(_SUMMARY_ROW_LABELS)})이 아니다: {row!r} "
+            f"(페이지 {pages} 에서 반복 등장) — 반복된 데이터 행을 반환하면 "
+            "그리드 구조를 잘못 이해했을 수 있으므로 반환하지 않는다."
         )
 
-    return [header, *seen.values()]
+    # Task 7b Fix round 3 (컨트롤러 R13): 데이터 계약("유효구직건수의 분해값을
+    # 더해 총계로 쓰지 않는다 — 총계는 총계 행에서 받는다")을 지키려면 허용된
+    # 요약 행(위에서 걸러짐)을 본문에 섞어 반환하면 안 된다 — 그렇다고 버리지도
+    # 않는다. 본문에서 빼 별도 `.summaries` 로 담아 돌려준다.
+    data_rows = [row for key, row in seen.items() if key not in summaries]
+    result = _WithSummaries([header, *data_rows])
+    result.summaries = list(summaries.values())
+    return result
 
 
 _EXTRACT_JS = r"""
@@ -280,9 +351,9 @@ def fetch_grid(url: str, *, page, max_scrolls: int = 200) -> list[list[str]]:
         너무 딱 맞아떨어지므로 — 탐지 실패로 보고 실패한다(모듈 수준 단일
         페이지로 오판하지 않기 위함). 타이밍에 기대는 건 (1)뿐이고, (2)는
         시간과 무관한 교차검증이다. 페이지 걷기 자체가 실패하면(클릭이 안
-        먹거나, 어느 페이지가 비었거나, 누적 총수가 안 맞으면)
-        `OlapPageWalkError`/`OlapExtractionError` 를 낸다 (`_walk_paginated_grid`
-        docstring 참고).
+        먹거나, 어느 페이지가 비었거나, 요약 행이 아닌 행이 페이지를 넘나들며
+        반복되면) `OlapPageWalkError`/`OlapExtractionError` 를 낸다
+        (`_walk_paginated_grid` docstring 참고).
       - max_scrolls 를 다 써도 고유 행 수가 계속 늘면 → OlapExtractionError
       - 컨테이너는 렌더됐지만 데이터 행이 하나도 없으면 → OlapExtractionError
     """
@@ -366,10 +437,19 @@ def fetch_grid(url: str, *, page, max_scrolls: int = 200) -> list[list[str]]:
 
 
 def fetch_and_parse_grid(url: str, *, browser, max_scrolls: int = 200) -> list[dict]:
-    """뷰어를 열어 그리드를 읽고 바로 dict 리스트로 편다 (fetch_grid + parse_grid)."""
+    """뷰어를 열어 그리드를 읽고 바로 dict 리스트로 편다 (fetch_grid + parse_grid).
+
+    fetch_grid 가 반환에 `.summaries` 를 실어 보내면(R13, 페이지네이션 경로 —
+    총계 등 요약 행) 같은 방식으로 파싱해 결과의 `.summaries` 속성으로 그대로
+    넘긴다 — 조용히 버리지 않는다. parse_grid 자체의 시그니처
+    (list[list[str]] -> list[dict], R2)는 그대로다.
+    """
     page = browser.new_page()
     try:
         rows = fetch_grid(url, page=page, max_scrolls=max_scrolls)
     finally:
         page.close()
-    return parse_grid(rows)
+    parsed = _WithSummaries(parse_grid(rows))
+    raw_summaries = getattr(rows, "summaries", None)
+    parsed.summaries = parse_grid([rows[0], *raw_summaries]) if raw_summaries else []
+    return parsed
