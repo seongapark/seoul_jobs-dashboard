@@ -154,6 +154,24 @@ export function hasValue(rows, selection) {
     Object.entries(selection).every(([key, want]) => row[key] === want));
 }
 
+// 시군구 원자료(vacancy/placement/insured, 그리고 같은 그리드인 vacancyIndustry/
+// insuredIndustry)를 시도로 거른다. 이 행들엔 sido 필드가 없고 sigungu 코드
+// (행정표준코드)의 앞 두 자리가 시도다(서울 11·경기 41·인천 28). row.sido로
+// 걸러버리면 시군구 행 전부가 필터를 통과 못 해 카드가 조용히 다 사라진다
+// (R22) — 그래서 이 함수 하나로 통일해 그 실수를 한 곳에서만 낼 수 있게
+// 막는다. mobility 처럼 시도 축 그 자체인 행(row.sido 존재)에는 쓰지 않는다
+// — 그건 그냥 row.sido === sido 로 거른다(R35).
+export function inSido(rows, sido) {
+  return rows.filter((r) => r.sigungu && r.sigungu.startsWith(sido));
+}
+
+// 시군구별로 쪼개진 값을 한 필드 기준으로 합산한다. 직종별·산업별 화면이
+// 똑같이 "선택 시도 안 시군구 합"을 여러 필드(유효구인·유효구직·피보험자·
+// 취득·상실…)에 반복해서 구해 화면마다 다시 짜지 않는다.
+export function sumBy(rows, field) {
+  return rows.reduce((s, r) => s + (r[field] ?? 0), 0);
+}
+
 // R41(리뷰 지적) — 스위처 선택지는 지역으로 걸러야 한다. 시군구 축 행에는
 // sido 필드가 없다(sigungu/center 뿐) — 시군구 코드가 행정표준코드라 앞
 // 두 자리가 시도다(서울 "11"·경기 "41"·인천 "28"). 안 거르면 데이터가

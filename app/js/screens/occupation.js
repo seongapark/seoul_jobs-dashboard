@@ -1,5 +1,5 @@
 import { card, pairCard, bars, collapseCard, esc, num, RATIO_NOTE, insuredBody } from "../components.js";
-import { ratio, hasValue, titleFor, period, half } from "../data.js";
+import { ratio, hasValue, titleFor, period, half, inSido, sumBy } from "../data.js";
 
 // 직종별 화면 — 컨트롤러가 다시 쓴 브리프(task-12-brief.md) §전체가 유일한
 // 요구사항이다. 플랜 원문의 카드 3장 스케치는 실데이터 모양과 어긋나(R21~26)
@@ -10,17 +10,13 @@ import { ratio, hasValue, titleFor, period, half } from "../data.js";
 // 그래서 지역 필터를 화면이 직접 건다: 시군구 행에는 sido 필드가 없고
 // sigungu 코드(행정표준코드)의 앞 두 자리가 시도다(서울 11·경기 41·인천 28).
 // row.sido === sido 로 잘못 쓰면 시군구 행 전부가 필터를 통과 못 해
-// 카드가 조용히 다 사라진다(R22) — 그래서 inSido() 하나로 통일해 이 실수를
-// 한 곳에서만 낼 수 있게 막는다.
-const inSido = (rows, sido) => rows.filter((r) => r.sigungu && r.sigungu.startsWith(sido));
+// 카드가 조용히 다 사라진다(R22) — inSido()/sumBy() 는 산업별 화면
+// (Task 13)도 그대로 쓰므로 data.js 로 올렸다(화면마다 복사하지 않는다).
 
 // 카드 감춤 규칙(화면 규칙 1)의 단일 판단점은 여전히 data.hasValue() 다.
 // hasValue(rows, {}) 는 selection 이 빈 객체라 모든 행에 대해 vacuously
 // true 라 rows.length > 0 과 같다 — "이 시도에 행이 하나라도 있는가"도
 // 같은 함수 하나로 판단해 화면마다 별도 존재-체크를 다시 짜지 않는다.
-function sumBy(rows, field) {
-  return rows.reduce((s, r) => s + (r[field] ?? 0), 0);
-}
 
 // sigunguNames 표의 "서울특별시 종로구" 에서 시도 접두(첫 단어)를 뺀 짧은
 // 이름("종로구")을 낸다 — 480px 폭에서 전체 이름은 자치구별 막대 라벨을
