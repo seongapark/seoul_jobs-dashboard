@@ -59,6 +59,51 @@ def test_collect_shapes_rows():
     }
 
 
+# ---------------------------------------------------------------------------
+# I1 실측 (2026-09-02, KOSIS 실호출: 서울 · 전규모 · 202601)
+#
+# 총괄 카드 5(app/js/screens/overview.js)는 est 행을 `occupation: ""` 로 찾는다.
+# 그 키가 맞으려면 "전직종" 행의 코드가 접두만 있고 뒤가 비어 있어야 하는데,
+# 실측 전까지 확인된 것은 `keco2026_02` 하나뿐이었다. 틀렸으면 총괄 탭의 유일한
+# KOSIS 카드가 **조용히** 사라진다(화면 규칙 1 이 감춘다) — 그래서 쟀다.
+#
+#   DT_118N_DEN062 (직종별)  C3='keco2026_'            C3_NM='전직종'  DT=109,560
+#   DT_118N_DEN061 (산업별)  C3='2026INDUSTRY_11S000'  C3_NM='전산업'  DT=329,827
+#
+# 즉 **두 축이 비대칭이다.** 직종은 접두만 남아 접두 제거 뒤 ""가 되지만, 산업은
+# `11S000` 이라는 실제 코드를 갖는다. 총괄의 `occupation: ""` 은 옳고, 산업 쪽에
+# 같은 모양(`industry: ""`)을 유추해 쓰면 그 카드는 영원히 감춰진다. 그 비대칭을
+# 다음 사람이 유추로 뒤집지 못하게 여기 못 박는다.
+# ---------------------------------------------------------------------------
+
+def _one_row_fetch(c3, c3_nm, dt):
+    def fake_fetch(table, *, item, obj_l1, obj_l2, obj_l3, periods, recent, api_key, get=None):
+        return [{"PRD_DE": "202601", "DT": dt, "C1": obj_l1, "C2": obj_l2,
+                 "C3": c3, "C3_NM": c3_nm, "ITM_ID": item}]
+    return fake_fetch
+
+
+def test_all_occupations_row_joins_on_an_empty_occupation():
+    rows = est.collect(["202601"], api_key="KEY",
+                       fetch=_one_row_fetch("keco2026_", "전직종", "109,560"))
+    plan = [r for r in rows if r["item"] == "채용계획인원" and r["sido"] == "11"
+            and r["size"] == "전규모"]
+    assert plan[0]["occupation"] == ""          # 총괄 카드 5 의 조인 키
+    assert plan[0]["occupation_name"] == "전직종"
+    assert plan[0]["value"] == 109560
+
+
+def test_all_industries_row_does_not_join_on_an_empty_industry():
+    """산업 쪽은 뒤가 비어 있지 않다 — 직종 쪽 모양을 유추하면 조인이 안 된다."""
+    rows = est.collect_industry(["202601"], api_key="KEY",
+                                fetch=_one_row_fetch("2026INDUSTRY_11S000", "전산업", "329,827"))
+    total = [r for r in rows if r["item"] == "채용인원" and r["sido"] == "11"
+             and r["size"] == "전규모"]
+    assert total[0]["industry"] == "11S000"
+    assert total[0]["industry"] != ""
+    assert total[0]["industry_name"] == "전산업"
+
+
 def test_sido_object_codes_map_to_the_administrative_standard_code_eis_uses():
     """Task 7b (R9): KOSIS 요청 코드(est.SIDO_CODE 의 15118REG2012_* 접미사)는
     KOSIS 자체 시도 코드 체계다 — 인천은 "23", 경기는 "31" 이다. 그런데 EIS

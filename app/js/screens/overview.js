@@ -17,6 +17,11 @@ import { ratio, hasValue, period, half, priorYearPeriod } from "../data.js";
 
 export function render(store, selection = { sido: "11" }) {
   const bySido = { sido: selection.sido };
+  // I1 실측 (2026-09-02, KOSIS 실호출) — "전직종" 행의 코드는 접두만 있는
+  // `keco2026_` 이고, est.collect 가 접두를 떼므로 occupation 은 정확히 ""다
+  // (서울·전규모·202601 채용계획인원 109,560). **산업 쪽은 다르다** —
+  // "전산업"은 `2026INDUSTRY_11S000` 이라 뒤가 비어 있지 않다. 이 비대칭을
+  // 유추로 뒤집지 마라: tests/test_est.py 가 두 축을 각각 못 박아 뒀다.
   const planSelection = { sido: selection.sido, size: "전규모", occupation: "", item: "채용계획인원" };
 
   const cards = [];
