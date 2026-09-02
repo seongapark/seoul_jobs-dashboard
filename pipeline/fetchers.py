@@ -276,15 +276,113 @@ def _is_subtotal(row: dict, spec: Spec) -> bool:
     return any((row.get(field) or "").endswith(_SUBTOTAL_SUFFIX) for field in spec.rows)
 
 
-def _metro_only(rows: list[dict], spec: Spec) -> list[dict]:
-    """수도권 이름표와 정확히 일치하는 행만 남긴다 (실측 2).
+# 수도권 시도 이름표 -> 행정표준코드. 시군구 이름은 전부 이 셋 중 하나로 시작한다.
+_SIDO_OF_PREFIX = {"서울특별시": "11", "경기도": "41", "인천광역시": "28"}
+
+
+def _sido_of_name(name: str) -> str | None:
+    """시군구 이름이 속한 수도권 시도 코드. 수도권 밖이거나 '지역무관'이면 None."""
+    head = name.split(" ", 1)[0]
+    return _SIDO_OF_PREFIX.get(head)
+
+
+def _reparent_general_districts(rows: list[dict], spec: Spec) -> list[dict]:
+    """경기 일반구 행을 모시(母市) 이름으로 바꿔 합산 이관한다 (R53).
+
+    전역 제약 "경기 일반구 코드(41111 등) 사용 금지"를 예전엔 **그 행을 버려라**로
+    읽었는데, 실측(2026-09-02)이 그 대가를 보여줬다 — 일반구 24개를 버리면 경기
+    유효구인인원의 **45.5%(22,289/48,938)** 가 사라지고 수원·성남·고양·용인이
+    구인 0 으로 나온다(일반구가 있는 시는 시 레벨 행의 구인이 0 이고 실값이 전부
+    일반구에 있다: 수원시 0/19,521 · 성남시 0/11,198 · 고양시 0/15,166).
+    제약의 뜻은 **출력 축에 일반구를 두지 말라**는 것이지(center_map 이 시 단위라
+    축이 시여야 한다) 값을 버리라는 것이 아니다. 그래서 버리지 않고 모시로 옮긴다.
+
+    모시는 **이름**으로 찾는다 — 코드 산술(41110 대 41111)로 유추하지 않는다.
+    마지막 낱말을 떼어낸 앞부분이 `sigungu_names.json` 에 있으면 그것이 모시다.
+    ("경기도 수원시 장안구" -> "경기도 수원시")
+
+    수도권 시도에 속하는데 모시를 못 찾은 일반구 행은 **조용히 버리지 않고
+    예외**를 낸다 — 조용히 버리는 것이 애초에 이 문제를 만든 실패 모양이다.
+    폐지 코드 넷(41283·41710·41730·41810)은 제약대로 계속 제외 대상이고 애초에
+    `sigungu_names.json` 에 없으므로 여기 걸리지 않는다(낱말이 둘뿐이라 일반구
+    후보가 아니다). 수도권 밖 일반구("경상남도 창원시 성산구")는 그냥 넘어간다.
+    """
+    if spec.sido_axis:
+        return rows
+    known = eis.SIGUNGU_NAME_TO_CODE
+    out = []
+    for row in rows:
+        name = (row.get(spec.region) or "").strip()
+        parts = name.split(" ")
+        if name in known or len(parts) < 3 or _sido_of_name(name) is None:
+            out.append(row)
+            continue
+        parent = " ".join(parts[:-1])
+        if parent not in known:
+            raise FetchError(
+                f"수도권 일반구로 보이는 행의 모시를 못 찾는다: {name!r} "
+                f"(찾아본 모시: {parent!r}). 조용히 버리지 않는다 — "
+                "data/sigungu_names.json 이 이 시를 담고 있는지 확인하라.")
+        out.append({**row, spec.region: parent})
+    return out
+
+
+def _split_metro(rows: list[dict], spec: Spec) -> tuple[list[dict], dict]:
+    """수도권 행과, **같은 시도에 속하지만 70개 코드에 매핑되지 않는 행들의 합**(잔여)을 나눈다.
 
     전국 큐브에서 수도권 부분집합을 고르는 일이다. 너무 많이 버리면
     `checks.check_regions`(시군구 70개 완전성)가 잡는다.
+
+    잔여(R54)를 버리지 않고 시도별로 모아 돌려주는 이유: 시도 검산
+    `시군구합 + 잔여 == 시도값` 이 실측으로 **정확히** 성립하기 때문이다
+    (서울·인천에서 확인). 잔여를 버리면 그 등호가 성립하지 않는다.
+
+    잔여를 이루는 것 (실측 2026-09-02) — 나중에 검산이 실패하면 여기부터 의심하라:
+      - **시도 레벨 잔여 멤버**: 희망근무지를 시도까지만 적은 건. 시군구 축에
+        `"서울특별시"`·`"경기도"`·`"인천광역시"` 라는 이름의 행으로 나타난다
+        (서울 0/248,729 · 경기 0/43,823 · 인천 0/47,853 — 구인은 0, 구직만 있다).
+      - 폐지 코드 등 우리 70개 표에 없는 시군구 행(있다면).
+    `"지역무관"`(0/103,682)은 어느 시도에도 안 붙으므로 잔여가 **아니다** —
+    시도 값에도 안 들어 있다. 그래서 그냥 버린다.
     """
     known = eis._SIDO_NAME_TO_CODE if spec.sido_axis else eis.SIGUNGU_NAME_TO_CODE
-    return [row for row in rows
-            if (row.get(spec.region) or "").strip() in known and not _is_subtotal(row, spec)]
+    kept: list[dict] = []
+    residual: dict[str, dict] = {}
+    for row in rows:
+        if _is_subtotal(row, spec):
+            continue
+        name = (row.get(spec.region) or "").strip()
+        if name in known:
+            kept.append(row)
+            continue
+        if spec.sido_axis:
+            continue
+        sido = _sido_of_name(name)
+        if sido is None:
+            continue                       # 수도권 밖 · 지역무관 — 시도 값에 없다
+        bucket = residual.setdefault(sido, {field: 0 for field in spec.measures})
+        for field, columns in spec.measures.items():
+            bucket[field] += eis.to_number(eis._first(row, tuple(columns)))
+    return kept, residual
+
+
+def _merge_rows(rows: list[dict], spec: Spec) -> list[dict]:
+    """축이 같은 행을 하나로 합친다 — 일반구 이관(R53)이 만든 중복을 더한다.
+
+    이관 뒤에는 "경기도 수원시"(시 레벨 잔여)와 장안·권선·팔달·영통 네 일반구가
+    같은 축 값을 갖게 된다. 그대로 두면 같은 (시군구, 직종) 행이 여럿 나가
+    화면이 어떻게 다루느냐에 따라 값이 달라진다 — 여기서 더해 하나로 만든다.
+    """
+    numeric = set(spec.measures)
+    merged: dict[tuple, dict] = {}
+    for row in rows:
+        key = tuple(sorted((k, v) for k, v in row.items() if k not in numeric))
+        if key in merged:
+            for field in numeric:
+                merged[key][field] = merged[key].get(field, 0) + row.get(field, 0)
+        else:
+            merged[key] = dict(row)
+    return list(merged.values())
 
 
 def _totals(summaries: list[dict], spec: Spec) -> dict | None:
@@ -322,10 +420,13 @@ def _grid(spec: Spec, period: str, *, browser, get, fetch) -> olap.ParsedGrid:
 
 def _fetch_monthly(spec: Spec, period: str, *, browser, cm, get, fetch) -> Fetched:
     grid = _grid(spec, period, browser=browser, get=get, fetch=fetch)
-    body = _metro_only(_normalize(grid.rows, period), spec)
+    normalized = _reparent_general_districts(_normalize(grid.rows, period), spec)
+    body, residual = _split_metro(normalized, spec)
     rows = spec.parse(body, cm) if spec.needs_cm else spec.parse(body)
+    rows = _merge_rows(rows, spec)          # 일반구 이관이 만든 중복을 더한다 (R53)
     checks.check_axis_values(rows, _axis_fields(spec))
-    return Fetched(rows, _totals(_normalize(grid.summaries, period), spec))
+    return Fetched(rows, _totals(_normalize(grid.summaries, period), spec),
+                   None if spec.sido_axis else residual)
 
 
 def monthly_fetchers(*, browser, cm, get=requests.get,
@@ -367,7 +468,9 @@ def _fetch_series(spec: Spec, periods, *, browser, get, fetch, sleep, log) -> li
             sleep(SERIES_PAUSE_SECONDS)     # 정중함 — 몰아치지 않는다
         try:
             grid = _grid(spec, period, browser=browser, get=get, fetch=fetch)
-            month = spec.parse(_metro_only(_normalize(grid.rows, period), spec))
+            body, _ = _split_metro(
+                _reparent_general_districts(_normalize(grid.rows, period), spec), spec)
+            month = _merge_rows(spec.parse(body), spec)
             checks.check_axis_values(month, _axis_fields(spec))
         except Exception as error:          # noqa: BLE001 — 한 달 실패는 건너뛴다
             failed.append(period)

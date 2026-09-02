@@ -345,3 +345,71 @@ def test_collapsed_nested_header_cell_is_rejected(recorded_layout):
 
     with pytest.raises(fetchers.checks.CheckFailed):
         built["vacancy"]("202607")
+
+
+# ---------------------------------------------------------------------------
+# R53 — 경기 일반구를 버리지 말고 모시로 합산 이관한다.
+#
+# 실측(2026-09-02): 일반구 24개를 버리면 경기 유효구인인원의 45.5%
+# (22,289/48,938)가 사라지고 수원·성남·고양·용인이 구인 0 으로 나온다.
+# ---------------------------------------------------------------------------
+
+def _gyeonggi_grid(period="202607"):
+    label = f"{period[:4]}년 {period[4:]}월"
+
+    def row(name, v, s):
+        return {"(근무지역)시군구": name, "직종_중분류": "2025직종_경영·행정·사무직",
+                f"{label}_유효구인인원(전체)": v, f"{label}_유효구직자수(전체)": s}
+
+    rows = [
+        row("경기도 수원시", "0", "19,521"),          # 시 레벨 잔여 — 구인이 0 이다
+        row("경기도 수원시 장안구", "500", "1,000"),
+        row("경기도 수원시 권선구", "300", "700"),
+        row("경기도 이천시", "1,856", "4,396"),        # 일반구가 없는 시
+        row("경기도", "0", "43,823"),                  # 시도 잔여 멤버
+        row("경상남도 창원시 성산구", "9", "9"),        # 수도권 밖 일반구 — 그냥 버린다
+    ]
+    return olap.ParsedGrid(rows, [row("총계", "165,821", "1,550,154")])
+
+
+def test_general_districts_are_merged_into_their_parent_city(recorded_layout):
+    """수원시가 0 이 아니어야 한다 — 시 레벨 잔여 + 일반구 합."""
+    grid = _FakeGrid(result=_gyeonggi_grid())
+    built = fetchers.monthly_fetchers(browser=object(), cm=_CM(), get=_fake_get(), fetch=grid)
+
+    rows = built["vacancy"]("202607").rows
+    by_code = {r["sigungu"]: r for r in rows}
+
+    assert by_code["41110"]["vacancy"] == 800            # 0 + 500 + 300
+    assert by_code["41110"]["seekers"] == 21221          # 19,521 + 1,000 + 700
+    assert by_code["41500"]["vacancy"] == 1856           # 일반구 없는 시는 그대로
+    assert "41111" not in by_code                        # 출력 축에 일반구는 없다
+
+
+def test_metro_general_district_without_a_parent_raises(recorded_layout):
+    """모시를 못 찾으면 조용히 버리지 않는다 — 그게 애초에 이 문제를 만든 실패 모양이다."""
+    grid = _gyeonggi_grid()
+    grid.rows.append({**grid.rows[1], "(근무지역)시군구": "경기도 없는시 어떤구"})
+    built = fetchers.monthly_fetchers(browser=object(), cm=_CM(), get=_fake_get(),
+                                      fetch=_FakeGrid(result=grid))
+    with pytest.raises(fetchers.FetchError):
+        built["vacancy"]("202607")
+
+
+def test_residual_is_collected_per_sido_for_the_sido_check(recorded_layout):
+    """시도 잔여('경기도' 행)를 버리지 않고 시도별로 모아 넘긴다 (R54)."""
+    grid = _FakeGrid(result=_gyeonggi_grid())
+    built = fetchers.monthly_fetchers(browser=object(), cm=_CM(), get=_fake_get(), fetch=grid)
+
+    fetched = built["vacancy"]("202607")
+
+    assert fetched.residuals["41"] == {"vacancy": 0, "seekers": 43823}
+
+
+def test_sido_datasets_have_no_residual_concept(recorded_layout):
+    rows, summaries = _vacancy_grid()
+    grid = _FakeGrid(result=olap.ParsedGrid(
+        [{"(근무지역)시도": "서울", "2026년 07월_유효구인인원(전체)": "1",
+          "2026년 07월_유효구직자수(전체)": "1"}], []))
+    built = fetchers.monthly_fetchers(browser=object(), cm=_CM(), get=_fake_get(), fetch=grid)
+    assert built["vacancy_sido"]("202607").residuals is None
