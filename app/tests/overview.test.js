@@ -16,7 +16,11 @@ const store = {
   insured: { period: "202607", rows: [
     { sigungu: "11110", center: "서울종로센터", insured: SIGUNGU_SENTINEL, gained: SIGUNGU_SENTINEL, lost: SIGUNGU_SENTINEL },
   ] },
-  vacancySido: { period: "202607", rows: [{ sido: "11", vacancy: 29196, seekers: 268616 }] },
+  vacancySido: { period: "202607", rows: [
+    { sido: "11", vacancy: 29196, seekers: 268616 },
+    { sido: "41", vacancy: 48938, seekers: 317754 },
+    { sido: "28", vacancy: 9268, seekers: 86627 },
+  ] },
   placementSido: { period: "202607", rows: [{ sido: "11", placements: 25233 }] },
   insuredSido: { period: "202607", rows: [{ sido: "11", insured: 4698520, gained: 193339, lost: 192131 }] },
   est: { period: "202601", rows: [{ sido: "11", size: "전규모", occupation: "", item: "채용계획인원", value: 109560 }] },
@@ -113,6 +117,31 @@ if (htmlOtherSidoSeries.includes("추세")) {
 } else {
   console.log("ok 이 시도의 시계열 행이 없으면 추세 카드가 빠진다");
 }
+
+// --- 수도권 비교 표 (스펙 §4.1, 카드 2 뒤 · 카드 3 앞) -----------------------
+// I2 — 원장 어디에도 이 항목을 빼기로 한 판정이 없다. 누락이지 판단이 아니다.
+has(html, "수도권 비교", "수도권 비교 표가 나온다");
+has(html, '<table class="tbl"', "목업 CSS 의 .tbl 클래스를 쓴다");
+has(html, "48,938", "경기 유효구인이 표에 들어간다");
+has(html, "9,268", "인천 유효구인이 표에 들어간다");
+has(html, "317,754", "경기 유효구직이 표에 들어간다");
+has(html, "is-me", "선택한 시도 행이 강조된다");
+// 순서: 스펙이 그린 자리 — 카드 2(추세) 뒤, 카드 3(취업건수) 앞.
+const orderOk = html.indexOf("유효구인 · 유효구직 추세") < html.indexOf("수도권 비교")
+  && html.indexOf("수도권 비교") < html.indexOf("취업건수");
+eq(orderOk, true, "수도권 비교 표는 추세 카드 뒤, 취업건수 앞에 놓인다");
+
+// 시도 파일에 행이 하나도 없으면 표도 카드째 사라진다(화면 규칙 1).
+const htmlNoSido = render({ ...store, vacancySido: { period: "202607", rows: [] } }, { sido: "11" });
+hasNot(htmlNoSido, "수도권 비교", "시도 행이 없으면 비교 표도 카드째 감춘다");
+// 한 시도만 있어도 지어내 채우지 않는다 — 있는 행만 그린다.
+const htmlOneSido = render(
+  { ...store, vacancySido: { period: "202607", rows: [{ sido: "41", vacancy: 48938, seekers: 317754 }] } },
+  { sido: "11" });
+has(htmlOneSido, "수도권 비교", "한 시도만 있어도 표는 나온다");
+has(htmlOneSido, "<td>경기</td>", "있는 시도 행은 그린다");
+hasNot(htmlOneSido, "<td>서울</td>", "없는 시도 행을 지어내지 않는다");
+// (29,196 은 추세 카드의 끝점 라벨로도 나오므로 값 문자열로는 판정하지 않는다.)
 
 // 카드 4 전년동월대비(R32) — insuredSeries 에 12개월 전 같은 달이 있으면 붙는다.
 has(html, "card__delta", "전년동월대비가 있으면 .card__delta 가 붙는다");

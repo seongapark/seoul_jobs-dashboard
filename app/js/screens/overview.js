@@ -1,5 +1,6 @@
-import { card, pairCard, trend, num, RATIO_NOTE, insuredBody } from "../components.js";
+import { card, pairCard, trend, num, esc, RATIO_NOTE, insuredBody } from "../components.js";
 import { ratio, hasValue, period, half, priorYearPeriod } from "../data.js";
+import { SIDO_OF_SCOPE } from "../tilemap.js";
 
 // 총괄 화면 — 스펙 §4.1. 시도 단위(R4)로 거른다: store.vacancySido/
 // placementSido/insuredSido 를 읽는다 — store.vacancy/placement/insured
@@ -56,6 +57,38 @@ export function render(store, selection = { sido: "11" }) {
         ],
         labels,
       }),
+    }));
+  }
+
+  // 수도권 비교 (표) — 스펙 §4.1 이 카드 2 뒤·카드 3 앞에 그린 자리다(핀 번호가
+  // 없는 유일한 카드라 제목에도 .pin 을 붙이지 않는다). 시도 셋을 한눈에 견주는
+  // 것이 이 대시보드의 이름값("수도권")이고, 스위처로 시도를 갈아 보며 비교하는
+  // 수고를 없앤다. 값은 이미 실린 store.vacancySido 세 줄이 전부다 — 새 자료를
+  // 받지 않는다.
+  //
+  // 지역 이름표는 tilemap.SIDO_OF_SCOPE 하나에서 뒤집어 만든다. 서울 11 · 경기
+  // 41 · 인천 28 은 이 프로젝트가 한 번 틀렸던 값이라(R9 — 경기를 KOSIS 코드
+  // 31 로 적었다) 사본을 늘리지 않는다.
+  const metroRows = Object.entries(SIDO_OF_SCOPE)
+    .map(([label, code]) => ({ label, code, row: store.vacancySido.rows.find((r) => r.sido === code) }))
+    .filter((entry) => entry.row);
+  if (metroRows.length) {
+    // 없는 시도는 줄을 지어내지 않고 그냥 빠진다 — 화면 규칙 1 의 표 안 판본이다.
+    const bodyRows = metroRows.map(({ label, code, row }) => {
+      const isMe = code === selection.sido ? ' class="is-me"' : "";
+      return `<tr${isMe}><td>${esc(label)}</td>
+        <td class="num">${num(row.vacancy)}</td>
+        <td class="num">${num(row.seekers)}</td>
+        <td class="num">${ratio(row.vacancy, row.seekers) ?? "—"}</td></tr>`;
+    }).join("");
+    cards.push(card({
+      title: "수도권 비교",
+      badge: period(store.vacancySido.period),
+      body: `<table class="tbl">
+        <thead><tr><th>지역</th><th>유효구인</th><th>유효구직</th><th>구인배수</th></tr></thead>
+        <tbody>${bodyRows}</tbody>
+      </table>`,
+      notes: [RATIO_NOTE],
     }));
   }
 
