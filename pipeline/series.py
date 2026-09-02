@@ -1,4 +1,4 @@
-"""EIS OLAP (지역별)시도 x 마감년월 그리드 한 조각을 시계열 행으로 편다.
+"""EIS OLAP 시도 x 마감년월 그리드 한 조각을 시계열 행으로 편다.
 
 Task 9b (R19/R27) — 플랜에 없던 태스크였다. §4.1 카드 2(24개월 추세),
 §4.2 카드 8·§4.3 카드 11(이번 달 대 최근 6개월 평균)이 이력을 요구하는데
@@ -72,12 +72,19 @@ def _cap_recent_months(rows: list[dict]) -> list[dict]:
 
 
 def collect_vacancy_series(rows: list[dict]) -> list[dict]:
-    """(지역별)시도 x 마감년월 기본 레이아웃 유효구인구직 그리드를 시계열로 편다."""
+    """(근무지역)시도 x 마감년월 유효구인구직 그리드를 시계열로 편다.
+
+    R45 — 시도 축은 (근무지역)이다. 이 시계열은 총괄 화면의 추세 카드를
+    그리는데, `eis.collect_vacancy_sido` 가 (근무지역)으로 옮겨간 마당에
+    여기만 (지역별)에 남으면 **같은 화면 안에서 KPI 와 추세선이 서로 다른
+    정의**가 된다(실측 차이: 2026-07 서울 15,125 vs 29,196). R45 가 없애려는
+    바로 그 어긋남이라 함께 옮긴다.
+    """
     out = []
     for row in rows:
         out.append({
             "period": eis.period_code(_period_text(row)),
-            "sido": eis.sido_code(row.get("(지역별)시도") or row.get("지역")),
+            "sido": eis.sido_code(eis._axis(row, "(근무지역)시도")),
             "vacancy": eis.to_number(row.get("유효구인인원(전체)")),
             "seekers": eis.to_number(eis._first(row, eis._SEEKERS_KEYS)),
         })
@@ -85,12 +92,12 @@ def collect_vacancy_series(rows: list[dict]) -> list[dict]:
 
 
 def collect_insured_series(rows: list[dict]) -> list[dict]:
-    """(사업장)시도 x 마감년월 기본 레이아웃 피보험자 그리드를 시계열로 편다."""
+    """(사업장)시도 x 마감년월 피보험자 그리드를 시계열로 편다 (R45 의 예외 — (사업장)이 유일한 축)."""
     out = []
     for row in rows:
         out.append({
             "period": eis.period_code(_period_text(row)),
-            "sido": eis.sido_code(row.get("(사업장)시도") or row.get("지역")),
+            "sido": eis.sido_code(eis._axis(row, "(사업장)시도")),
             "insured": eis.to_number(row.get("피보험자수(전체)")),
         })
     return _cap_recent_months(out)

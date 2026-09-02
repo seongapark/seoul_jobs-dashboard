@@ -180,13 +180,13 @@ def test_collect_vacancy_over_real_captured_grid_sample():
 
 def test_collect_vacancy_sido_matches_verified_totals():
     rows = [
-        {"마감년월": "2026년 07월", "(지역별)시도": "총계",
+        {"마감년월": "2026년 07월", "(근무지역)시도": "총계",
          "유효구인인원(전체)": "165,821", "유효구직자수(전체)": "1,550,154"},
-        {"마감년월": "2026년 07월", "(지역별)시도": "서울",
+        {"마감년월": "2026년 07월", "(근무지역)시도": "서울",
          "유효구인인원(전체)": "29,196", "유효구직자수(전체)": "268,616"},
-        {"마감년월": "2026년 07월", "(지역별)시도": "경기",
+        {"마감년월": "2026년 07월", "(근무지역)시도": "경기",
          "유효구인인원(전체)": "45,743", "유효구직자수(전체)": "407,355"},
-        {"마감년월": "2026년 07월", "(지역별)시도": "인천",
+        {"마감년월": "2026년 07월", "(근무지역)시도": "인천",
          "유효구인인원(전체)": "7,501", "유효구직자수(전체)": "99,637"},
     ]
     out = eis.collect_vacancy_sido(rows)
@@ -201,7 +201,7 @@ def test_collect_vacancy_sido_matches_verified_totals():
 def test_collect_vacancy_sido_rows_have_no_sigungu_or_center_field():
     """R4: 시도 단위 행은 sigungu/center 를 안 갖는다 — 시군구 코드 체계와
     섞이면 "시도값을 시군구 합으로 만든 것"처럼 잘못 읽힐 위험이 있다."""
-    rows = [{"마감년월": "2026년 07월", "(지역별)시도": "서울",
+    rows = [{"마감년월": "2026년 07월", "(근무지역)시도": "서울",
              "유효구인인원(전체)": "1", "유효구직자수(전체)": "1"}]
     out = eis.collect_vacancy_sido(rows)
     assert "sigungu" not in out[0]
@@ -216,7 +216,7 @@ def test_collect_insured_sido_and_placement_sido_read_sido_axis():
     assert out[0] == {"period": "202607", "sido": "11",
                        "insured": 4698520, "gained": 193339, "lost": 192131}
 
-    placement_rows = [{"마감년월": "2026년 07월", "(지역별)시도": "경기",
+    placement_rows = [{"마감년월": "2026년 07월", "(근무지역)시도": "경기",
                         "취업건수(월)": "12,345"}]
     out = eis.collect_placement_sido(placement_rows)
     assert out[0] == {"period": "202607", "sido": "41", "placements": 12345}
@@ -224,7 +224,7 @@ def test_collect_insured_sido_and_placement_sido_read_sido_axis():
 
 def test_sido_collectors_reject_unmapped_sido_names():
     """수도권 밖 시도가 섞여 들어오면 조용히 버리지 않고 시끄럽게 실패한다."""
-    rows = [{"마감년월": "2026년 07월", "(지역별)시도": "부산",
+    rows = [{"마감년월": "2026년 07월", "(근무지역)시도": "부산",
              "유효구인인원(전체)": "1", "유효구직자수(전체)": "1"}]
     with pytest.raises(eis.UnknownRegion):
         eis.collect_vacancy_sido(rows)
@@ -257,3 +257,35 @@ def test_collect_insured_over_structural_sample_fixture():
     assert {r["center"] for r in out} == {
         "서울강남고용센터", "서울고용센터", "화성고용센터", "인천고용센터",
     }
+
+
+# ---------------------------------------------------------------------------
+# R45 — 시도 축은 (근무지역)이다. 옛 축을 조용히 받아들이지 않는다.
+# ---------------------------------------------------------------------------
+
+def test_vacancy_sido_rejects_the_old_regional_axis_column():
+    """옛 컬럼((지역별)시도)을 대체 이름으로 받아주면 '틀린 축을 조용히 통과'시킨다.
+
+    실측(2026-09-02) 2026년 07월 서울: (지역별) 29,196 vs (근무지역) 15,125 —
+    조용히 통과시키면 총괄 화면과 직종별 화면의 '서울'이 서로 다른 정의가 된다."""
+    rows = [{"마감년월": "2026년 07월", "(지역별)시도": "서울",
+             "유효구인인원(전체)": "29,196", "유효구직자수(전체)": "268,616"}]
+    with pytest.raises(eis.WrongAxis):
+        eis.collect_vacancy_sido(rows)
+
+
+def test_placement_sido_rejects_the_old_regional_axis_column():
+    rows = [{"마감년월": "2026년 07월", "(지역별)시도": "경기", "취업건수(월)": "1,000"}]
+    with pytest.raises(eis.WrongAxis):
+        eis.collect_placement_sido(rows)
+
+
+def test_insured_sido_keeps_the_workplace_axis():
+    """피보험자는 R45 의 명시적 예외 — (사업장)이 유일한 축이라 그대로 둔다."""
+    rows = [{"마감년월": "2026년 07월", "(사업장)시도": "서울",
+             "피보험자수(전체)": "10", "취득자수(월)": "1", "상실자수(월)": "2"}]
+    assert eis.collect_insured_sido(rows)[0]["sido"] == "11"
+
+    with pytest.raises(eis.WrongAxis):
+        eis.collect_insured_sido([{"마감년월": "2026년 07월", "(근무지역)시도": "서울",
+                                   "피보험자수(전체)": "10"}])

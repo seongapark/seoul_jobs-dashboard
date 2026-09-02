@@ -122,6 +122,14 @@ _INSURED_MEASURES = {
     "lost": ("상실자수(월)",),
 }
 
+# R48 (컨트롤러 판정, 2026-09-02) — **실측 범위를 여기 밝혀 둔다.**
+# 아래 표에서 살아있는 화면으로 확인한 것은 `유효구인구직`(menuId 020010020)
+# 리포트의 필드 이름뿐이다. `취업건수`·`피보험자`·`경력직이동` 세 리포트의
+# 좌측 분석항목 `uni_nm` 값과 (사업장) 축 이름은 **실측하지 않았고**,
+# `pipeline/eis.py` 가 읽는 컬럼 이름에서 유도했다. 셋을 다 실측하는 비용이
+# 위험보다 크다는 판정이라 그대로 둔다 — 이름이 틀리면 `layout.LayoutError`
+# ("필드를 못 찾는다")로 시끄럽게 드러나고, 그때 실측 한 번이면 고쳐진다.
+# 조용히 틀린 축으로 수집될 길은 없다(layout 의 드래그·렌더 검증 참고).
 MONTHLY_SPECS: dict[str, Spec] = {
     "vacancy": Spec("유효구인구직", ("(근무지역)시군구", "직종_중분류"),
                     "(근무지역)시군구", False, eis.collect_vacancy, True, _VACANCY_MEASURES),
@@ -130,14 +138,16 @@ MONTHLY_SPECS: dict[str, Spec] = {
     "vacancy_industry": Spec("유효구인구직", ("(근무지역)시군구", "산업_대분류"),
                              "(근무지역)시군구", False, eis.collect_vacancy, True,
                              _VACANCY_MEASURES),
-    "vacancy_sido": Spec("유효구인구직", ("(지역별)시도",),
-                         "(지역별)시도", True, eis.collect_vacancy_sido, False,
+    # R45 — 시도 축은 (근무지역)이다. 스펙 §2.2 "화면은 (근무지역) 축으로
+    # 통일한다"에 맞춘다(실측 차이: 2026-07 서울 15,125 vs (지역별) 29,196).
+    "vacancy_sido": Spec("유효구인구직", ("(근무지역)시도",),
+                         "(근무지역)시도", True, eis.collect_vacancy_sido, False,
                          _VACANCY_MEASURES),
     "placement": Spec("취업건수", ("(근무지역)시군구", "직종_중분류"),
                       "(근무지역)시군구", False, eis.collect_placement, True,
                       _PLACEMENT_MEASURES),
-    "placement_sido": Spec("취업건수", ("(지역별)시도",),
-                           "(지역별)시도", True, eis.collect_placement_sido, False,
+    "placement_sido": Spec("취업건수", ("(근무지역)시도",),
+                           "(근무지역)시도", True, eis.collect_placement_sido, False,
                            _PLACEMENT_MEASURES),
     "insured": Spec("피보험자", ("(사업장)시군구", "직종_중분류"),
                     "(사업장)시군구", False, eis.collect_insured, True, _INSURED_MEASURES),
@@ -153,8 +163,8 @@ MONTHLY_SPECS: dict[str, Spec] = {
 }
 
 SERIES_SPECS: dict[str, Spec] = {
-    "vacancy_series": Spec("유효구인구직", ("(지역별)시도",),
-                           "(지역별)시도", True, series.collect_vacancy_series, False,
+    "vacancy_series": Spec("유효구인구직", ("(근무지역)시도",),
+                           "(근무지역)시도", True, series.collect_vacancy_series, False,
                            _VACANCY_MEASURES),
     "insured_series": Spec("피보험자", ("(사업장)시도",),
                            "(사업장)시도", True, series.collect_insured_series, False,

@@ -218,13 +218,47 @@ def sido_code(name: str) -> str:
         raise UnknownRegion(f"수도권(서울/경기/인천) 밖 시도이거나 매핑에 없다: {name!r}") from None
 
 
+class WrongAxis(KeyError):
+    """기대한 지역 축 컬럼이 그리드에 없을 때 낸다 (R45).
+
+    옛 컬럼 이름과 새 컬럼 이름을 둘 다 받아들이면 **틀린 축을 조용히
+    통과시키는 길**이 된다 — 에러도 크래시도 없이 축만 틀린 파일이 배포되는,
+    이 프로젝트에서 가장 나쁜 실패 모양이다. 그래서 대체 이름을 찾지 않고
+    없으면 바로 실패한다.
+    """
+
+
+def _axis(row: dict, column: str) -> str:
+    try:
+        return row[column]
+    except KeyError:
+        raise WrongAxis(
+            f"기대한 지역 축 컬럼 {column!r} 이 없다 — 레이아웃이 다른 축으로 "
+            f"잡혔을 수 있다. 실제 컬럼: {sorted(row)}") from None
+
+
+# ---------------------------------------------------------------------------
+# R45 (Task 15a 실측, 2026-09-02) — 시도 축도 **(근무지역)** 이다.
+#
+# 스펙 §2.2: "화면은 (근무지역) 축으로 통일한다. 그래야 구인과 구직이 같은
+# 잣대가 된다." 그런데 이 두 함수는 (지역별)시도(사업장 소재지)를 읽고 있었다.
+# 실측이 그 차이를 숫자로 보여준다 — 2026년 07월 서울:
+#     (지역별)시도    유효구인 29,196 / 유효구직 268,616
+#     (근무지역)시도  유효구인 15,125 / 유효구직 355,893
+# 그래서 총괄 화면의 서울과 직종별 화면의 서울(= (근무지역)시군구 합)이 같은
+# 앱 안에서 서로 다른 정의가 됐다. 시도 축을 (근무지역)으로 옮겨 통일한다.
+#
+# **피보험자는 예외다** — (사업장) 축이 유일한 축이라 collect_insured_sido 는
+# 그대로 두고, 화면도 이미 "사업장 소재지 기준"이라고 밝히고 있다.
+# ---------------------------------------------------------------------------
+
 def collect_vacancy_sido(rows) -> list[dict]:
-    """(지역별)시도(또는 총계) 축 유효구인구직 행 — 시군구 합산 금지 규칙(R4)의 짝."""
+    """(근무지역)시도(또는 총계) 축 유효구인구직 행 — 시군구 합산 금지 규칙(R4)의 짝."""
     out = []
     for row in rows:
         out.append({
             "period": period_code(row["마감년월"]),
-            "sido": sido_code(row.get("(지역별)시도") or row.get("지역")),
+            "sido": sido_code(_axis(row, "(근무지역)시도")),
             "vacancy": to_number(row.get("유효구인인원(전체)")),
             "seekers": to_number(_first(row, _SEEKERS_KEYS)),
         })
@@ -232,24 +266,24 @@ def collect_vacancy_sido(rows) -> list[dict]:
 
 
 def collect_placement_sido(rows) -> list[dict]:
-    """시도 축 취업건수 행."""
+    """(근무지역)시도 축 취업건수 행 (R45)."""
     out = []
     for row in rows:
         out.append({
             "period": period_code(row["마감년월"]),
-            "sido": sido_code(row.get("(지역별)시도") or row.get("지역")),
+            "sido": sido_code(_axis(row, "(근무지역)시도")),
             "placements": to_number(row.get("취업건수(월)")),
         })
     return out
 
 
 def collect_insured_sido(rows) -> list[dict]:
-    """시도 축 피보험자 행."""
+    """(사업장)시도 축 피보험자 행 — R45 의 명시적 예외((사업장)이 유일한 축이다)."""
     out = []
     for row in rows:
         out.append({
             "period": period_code(row["마감년월"]),
-            "sido": sido_code(row.get("(사업장)시도") or row.get("지역")),
+            "sido": sido_code(_axis(row, "(사업장)시도")),
             "insured": to_number(row.get("피보험자수(전체)")),
             "gained": to_number(row.get("취득자수(월)")),
             "lost": to_number(row.get("상실자수(월)")),

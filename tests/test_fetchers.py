@@ -192,7 +192,7 @@ def test_totals_are_none_when_the_grid_gave_no_summary_row(recorded_layout):
 
 def _series_grid(period):
     label = f"{period[:4]}년 {period[4:]}월"
-    rows = [{"(지역별)시도": name,
+    rows = [{"(근무지역)시도": name,
              f"{label}_유효구인인원(전체)": "10",
              f"{label}_유효구직자수(전체)": "100"}
             for name in ("서울", "경기", "인천", "부산")]

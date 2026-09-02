@@ -24,7 +24,7 @@ INSURED_FIXTURE = ROOT / "tests/fixtures/eis_insured_series_rows.json"
 
 
 def _vacancy_row(period, sido, vacancy="1", seekers="1"):
-    return {"마감년월": period, "(지역별)시도": sido,
+    return {"마감년월": period, "(근무지역)시도": sido,
             "유효구인인원(전체)": vacancy, "유효구직자수(전체)": seekers}
 
 
