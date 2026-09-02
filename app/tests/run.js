@@ -1,5 +1,5 @@
 // app/tests/run.js — node 로 도는 최소 러너 (의존성 없음)
-import { titleFor, ratio } from "../js/data.js";
+import { titleFor, ratio, hasValue } from "../js/data.js";
 
 let failed = 0;
 const eq = (got, want, label) => {
@@ -22,5 +22,17 @@ eq(titleFor(thirteen, "구분"), `${twelve}… 구분`, "13자부터는 줄인�
 
 eq(ratio(29196, 268616), 0.11, "구인배수는 소수 둘째 자리");
 eq(ratio(0, 0), null, "분모가 0 이면 null");
+
+// hasValue — 카드 감춤 규칙의 단일 판단점 (직종 소분류를 고르면 채용계획인원
+// 카드가 사라지는 것도 이 함수 하나로 판단한다).
+const estRows = [
+  { sido: "11", occupation: "02", item: "채용계획인원", value: 26828 },
+];
+eq(hasValue(estRows, { sido: "11", occupation: "02", item: "채용계획인원" }), true,
+   "selection 에 맞는 행이 있으면 true");
+eq(hasValue(estRows, { sido: "11", occupation: "026", item: "채용계획인원" }), false,
+   "직종 소분류처럼 맞는 행이 없으면 false");
+eq(hasValue([], { sido: "11" }), false, "행이 아예 없으면 false");
+eq(hasValue(undefined, { sido: "11" }), false, "rows 자체가 없어도 false (크래시 없이)");
 
 process.exit(failed ? 1 : 0);
