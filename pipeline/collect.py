@@ -38,8 +38,14 @@ from typing import NamedTuple
 
 from pipeline import checks
 
+# Task 15a — 산업 축 데이터셋(vacancy_industry/insured_industry)은 같은 리포트를
+# 산업_대분류 축으로 한 번 더 받은 것이라 **행 모양과 측정값 필드가 짝 데이터셋과
+# 똑같다**(eis.collect_vacancy/collect_insured 를 그대로 쓴다). 이름 매핑이 없으면
+# FIELD_OF.get(base, base) 가 "vacancy_industry" 라는 있지도 않은 필드로
+# check_not_all_zero 를 돌려 매달 오탐으로 죽는다 — 그래서 여기 명시한다.
 FIELD_OF = {"vacancy": "vacancy", "placement": "placements",
-            "insured": "insured", "mobility": "movers"}
+            "insured": "insured", "mobility": "movers",
+            "vacancy_industry": "vacancy", "insured_industry": "insured"}
 
 # R18 — 데이터셋별로 검산할 (필드, mode) 목록. mode 의 비대칭은 checks.py
 # check_against_total 의 docstring 을 그대로 따른다: 구인/취업/피보험 같은
@@ -49,10 +55,18 @@ MEASURE_MODES: dict[str, tuple[tuple[str, str], ...]] = {
     "vacancy": (("vacancy", "equality"), ("seekers", "at_least")),
     "placement": (("placements", "equality"),),
     "insured": (("insured", "equality"),),
+    # Task 15a — 산업 축은 같은 측정값을 다른 분해축으로 받은 것이라 검산 규칙이
+    # 짝 데이터셋과 같다. 축이 달라도 총계는 하나이므로 여기서 갈라질 이유가 없다.
+    "vacancy_industry": (("vacancy", "equality"), ("seekers", "at_least")),
+    "insured_industry": (("insured", "equality"),),
 }
 
 _SIDO_SUFFIX = "_sido"
-_SIGUNGU_CHECKED = ("vacancy", "placement", "insured")
+# Task 15a — 산업 축 데이터셋도 시군구 축이다(행마다 sigungu 가 있다). 시군구
+# 완전성·인천 개편 코드 검사를 똑같이 받아야 맞다 — 빼면 산업 축 파일만
+# 시군구가 빠진 채로 조용히 나갈 수 있다.
+_SIGUNGU_CHECKED = ("vacancy", "placement", "insured",
+                    "vacancy_industry", "insured_industry")
 
 
 class Fetched(NamedTuple):

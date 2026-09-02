@@ -168,6 +168,20 @@ def _click_page(page, page_number: int) -> None:
 # 동작이다 — 그때 증거를 들고 이 목록에 추가한다.
 _SUMMARY_ROW_LABELS = frozenset({"총계"})
 
+# Task 15a 실측(2026-09-02, tools/probe_fetchers.py) — 중첩 축 그리드에는 그랜드
+# 토탈 말고 **그룹 소계** 행도 있고, 그것도 페이지 경계를 넘나들며 반복 렌더된다
+# (관측: `['서울특별시 전체', '서울특별시 전체', '0', '248,729']` 가 1·2페이지에
+# 함께 등장). 라벨은 바깥 레벨 값 뒤에 " 전체" 가 붙은 모양이다. 위 화이트리스트가
+# "실측으로 확인하기 전엔 추가하지 않는다"고 한 그 실측이 이번에 나온 것이라
+# 여기 규칙으로 더한다 — 지역·직종·산업 이름 중 " 전체" 로 끝나는 것은 없으므로
+# 진짜 데이터 행을 소계로 오분류할 위험은 낮다. 소계 행은 본문에서 빠져
+# `Grid.summaries` 로 간다(더하면 이중계상이므로 본문에 남기면 안 된다).
+_SUMMARY_ROW_SUFFIX = " 전체"
+
+
+def _is_summary_label(text: str) -> bool:
+    return text in _SUMMARY_ROW_LABELS or text.endswith(_SUMMARY_ROW_SUFFIX)
+
 
 class Grid(NamedTuple):
     """`_walk_paginated_grid`/`fetch_grid` 의 반환 타입 (R15, 리뷰 루프).
@@ -311,12 +325,12 @@ def _walk_paginated_grid(
         if len(pages) <= 1:
             continue
         row = seen[key]
-        if row[0] in _SUMMARY_ROW_LABELS:
+        if _is_summary_label(row[0]):
             summaries[key] = row
             continue
         raise OlapPageWalkError(
             f"중복된 행이 있는데 알려진 요약 행 라벨"
-            f"({sorted(_SUMMARY_ROW_LABELS)})이 아니다: {row!r} "
+            f"({sorted(_SUMMARY_ROW_LABELS)} 또는 '…{_SUMMARY_ROW_SUFFIX}')이 아니다: {row!r} "
             f"(페이지 {pages} 에서 반복 등장) — 반복된 데이터 행을 반환하면 "
             "그리드 구조를 잘못 이해했을 수 있으므로 반환하지 않는다."
         )
@@ -355,19 +369,50 @@ _EXTRACT_JS = r"""
     });
   }
 
-  // 행 머리 ((지역별)시도 등), DOM 순서 그대로
+  // 행 머리 — 중첩 축이면 레벨마다 td 가 따로 있고, 바깥 레벨은 rowspan 으로
+  // 그룹 첫 행에만 그려진다(Task 15a 실측). rowspan/colspan 을 펴서 레벨
+  // 수만큼 칸을 항상 채운다 — 안 그러면 대부분의 행이 리프 라벨 하나뿐이라
+  // (a) parse_grid 가 필드 이름을 어긋나게 붙이고, (b) 값이 같은 리프 행이
+  // 서로 다른 그룹에서 문자열까지 똑같아져 fetch_grid 의 중복 제거에 조용히
+  // 삼켜지거나 _walk_paginated_grid 가 "알 수 없는 중복"으로 죽는다.
+  const rowFieldEls = Array.from(
+    document.querySelectorAll('.dx-area-description-cell .dx-area-field-content'));
+  const rowFields = rowFieldEls.map(el => el.innerText.trim()).filter(Boolean);
+  const levels = Math.max(rowFields.length, 1);
+
   const rowLabelEls = Array.from(document.querySelectorAll('tbody.dx-pivotgrid-vertical-headers > tr'));
-  const rowLabels = rowLabelEls.map(tr => tr.innerText.trim());
+  const carry = new Array(levels).fill(null);
+  const rowLabels = rowLabelEls.map(tr => {
+    const cells = new Array(levels).fill(null);
+    for (let i = 0; i < levels; i++) {
+      if (carry[i] && carry[i].left > 0) { cells[i] = carry[i].text; carry[i].left -= 1; }
+    }
+    const tds = Array.from(tr.querySelectorAll('td'));
+    let t = 0;
+    for (let i = 0; i < levels; i++) {
+      if (cells[i] !== null) continue;
+      if (t >= tds.length) break;
+      const td = tds[t++];
+      const text = td.innerText.trim();
+      const rs = parseInt(td.getAttribute('rowspan') || '1', 10);
+      const cs = parseInt(td.getAttribute('colspan') || '1', 10);
+      for (let k = 0; k < cs && i + k < levels; k++) {
+        cells[i + k] = text;
+        if (rs > 1) carry[i + k] = { text: text, left: rs - 1 };
+      }
+      i += cs - 1;
+    }
+    return cells.map(v => (v === null ? '' : v));
+  });
 
   // 데이터 셀
   const dataTrs = Array.from(document.querySelectorAll('.dx-pivotgrid-area-data table tbody tr'));
   const dataRows = dataTrs.map(tr =>
     Array.from(tr.querySelectorAll('td')).map(td => td.innerText.trim()));
 
-  const rowDimEl = document.querySelector('.dx-area-description-cell .dx-area-field-content');
-  const header = [rowDimEl ? rowDimEl.innerText.trim() : '지역', ...colLabels];
+  const header = [...(rowFields.length ? rowFields : ['지역']), ...colLabels];
 
-  const body = rowLabels.map((label, i) => [label, ...(dataRows[i] || [])]);
+  const body = rowLabels.map((cells, i) => [...cells, ...(dataRows[i] || [])]);
   return [header, ...body];
 }
 """
@@ -379,7 +424,7 @@ def parse_grid(rows: list[list[str]]) -> list[dict]:
     return [dict(zip(header, row)) for row in body]
 
 
-def fetch_grid(url: str, *, page, max_scrolls: int = 200) -> Grid:
+def fetch_grid(url: str, *, page, max_scrolls: int = 200, after_load=None) -> Grid:
     """Playwright page 로 뷰어를 열고 렌더된 PivotGrid 를 읽는다.
 
     반환은 `Grid(header, rows, summaries)` 다(R15) — list 가 아니므로 옛
@@ -421,6 +466,13 @@ def fetch_grid(url: str, *, page, max_scrolls: int = 200) -> Grid:
     page.goto(url, wait_until="networkidle", timeout=90_000)
     page.wait_for_selector("div.dx-pivotgrid-area-data", timeout=60_000)
 
+    # Task 15a — 그리드를 읽기 **전에** 축을 바꿀 자리. 화면이 요구하는 축
+    # (시군구 × 직종 등)은 뷰어 URL 로는 못 얻고 좌측 필드초이서 드래그로만
+    # 얻는데(pipeline/layout.py), 그 조작은 goto 와 추출 사이에 끼어야 한다.
+    # 훅이 예외를 내면 그대로 위로 올린다 — 옛 축 그대로 읽어 가지 않는다.
+    if after_load is not None:
+        after_load(page)
+
     # 페이저는 데이터 영역보다 늦게 뜰 수 있다. 고정 시간만 대기한 뒤 바로
     # 세면, 진짜 다중 페이지 그리드도 "아직 안 떴을 뿐"인데 "없다"고 오판해
     # 스크롤 누적으로 새 버려 첫 페이지만 조용히 반환할 위험이 있다 — 이
@@ -433,6 +485,26 @@ def fetch_grid(url: str, *, page, max_scrolls: int = 200) -> Grid:
         pass
 
     pager_count = page.locator(_PAGER_SELECTOR).count()
+
+    # Task 15a 실측(2026-09-02) — 페이저의 숫자 버튼은 **최대 10개짜리 창**이고,
+    # 그보다 페이지가 많으면 끝에 "다음" 버튼이 붙는다(관측한 페이저 텍스트:
+    # '12345678910다음', `.dx-page` 는 그 "다음"까지 세어 11). 즉 pager_count 는
+    # 전체 페이지 수가 아니다. 이 사실을 모르는 채 `_walk_paginated_grid` 가
+    # 숫자 버튼만 걷으면 **예외 없이 잘린 그리드**를 돌려준다(실측: (근무지역)
+    # 시군구 × 직종_중분류 그리드에서 시군구 70개 중 14개만 수집됨). 이 모듈의
+    # 원칙대로, 창 너머 페이지가 있다는 증거가 보이면 조용히 잘린 결과를
+    # 반환하는 대신 시끄럽게 실패한다. (창을 넘겨가며 걷는 로직 자체는 아직
+    # 없다 — 후속 과제.)
+    if pager_count > 1:
+        labels = [text.strip() for text in
+                  page.eval_on_selector_all(_PAGER_SELECTOR, "els => els.map(e => e.innerText)")]
+        windowed = [text for text in labels if not text.isdigit()]
+        if windowed:
+            raise OlapPaginationError(
+                f"페이저에 숫자가 아닌 버튼({windowed})이 있다 — 숫자 버튼"
+                f"({[t for t in labels if t.isdigit()]})은 전체가 아니라 창일 뿐이고, "
+                "그것만 걸으면 잘린 그리드가 조용히 나간다. 페이저 창 넘기기가 "
+                "구현되기 전까지는 여기서 실패한다.")
 
     grid = page.evaluate(_EXTRACT_JS)
     header, *body = grid
@@ -513,7 +585,8 @@ class ParsedGrid(NamedTuple):
     summaries: list[dict]
 
 
-def fetch_and_parse_grid(url: str, *, browser, max_scrolls: int = 200) -> ParsedGrid:
+def fetch_and_parse_grid(url: str, *, browser, max_scrolls: int = 200,
+                         after_load=None) -> ParsedGrid:
     """뷰어를 열어 그리드를 읽고 바로 dict 로 편다 (fetch_grid + parse_grid 를 잇는 이음매).
 
     반환은 `ParsedGrid(rows, summaries)` 다 — `fetch_grid` 가 돌려주는
@@ -524,7 +597,7 @@ def fetch_and_parse_grid(url: str, *, browser, max_scrolls: int = 200) -> Parsed
     """
     page = browser.new_page()
     try:
-        grid = fetch_grid(url, page=page, max_scrolls=max_scrolls)
+        grid = fetch_grid(url, page=page, max_scrolls=max_scrolls, after_load=after_load)
     finally:
         page.close()
     rows = parse_grid([grid.header, *grid.rows])

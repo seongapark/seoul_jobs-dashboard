@@ -95,13 +95,14 @@ class _FakePage:
 
     def __init__(self, windows=None, infinite_new_rows: bool = False,
                  header=None, scroller_raises: bool = False, pager_count: int = 1,
-                 pager_wait_raises: bool = False):
+                 pager_wait_raises: bool = False, pager_labels=None):
         self._windows = windows or []
         self._infinite = infinite_new_rows
         self._header = header or ["지역", "값"]
         self.scroller_raises = scroller_raises
         self.pager_count = pager_count
         self.pager_wait_raises = pager_wait_raises
+        self.pager_labels = pager_labels
         self.pager_wait_calls = 0
         self._call = 0
         self.scroll_calls = 0
@@ -123,6 +124,15 @@ class _FakePage:
 
     def locator(self, selector):
         return _FakeLocator(self)
+
+    def eval_on_selector_all(self, selector, js):
+        """페이저 버튼의 라벨. 기본값은 '1'..'n' — 즉 전체 페이지가 다 보이는 상태.
+
+        pager_labels 를 주면 그대로 돌려준다 (실측된 창 페이저 '…10 다음' 재현용).
+        """
+        if self.pager_labels is not None:
+            return self.pager_labels
+        return [str(i) for i in range(1, self.pager_count + 1)]
 
     def evaluate(self, js):
         if self._infinite:
@@ -482,3 +492,16 @@ def test_fetch_and_parse_grid_round_trips_header_rows_and_summaries():
         "유효구인인원(전체)": "165,821",
         "유효구직자수(전체)": "1,550,154",
     }
+
+
+def test_fetch_grid_raises_when_the_pager_is_only_a_window():
+    """Task 15a 실측: 페이지가 10개를 넘으면 페이저는 '1…10 다음' 이라는 **창**만
+    보여주고 `.dx-page` 는 그 '다음'까지 세어 11을 준다. 숫자 버튼만 걷으면 예외
+    없이 잘린 그리드가 나간다(실측: 시군구 70개 중 14개만 수집) — 그러느니 실패한다."""
+    page = _FakePage(windows=[[["a", "1"]]], pager_count=11,
+                     pager_labels=[str(i) for i in range(1, 11)] + ["다음"])
+
+    with pytest.raises(olap.OlapPaginationError) as exc_info:
+        olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+
+    assert "다음" in str(exc_info.value)

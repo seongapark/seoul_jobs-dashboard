@@ -215,3 +215,29 @@ def test_run_halfyear_passes_when_compare_names_overlap(tmp_path):
     summary = collect.run_halfyear("202601", out_dir=tmp_path, api_key="KEY", collector=collector,
                                     compare_names={"경영·행정·사무직", "다른 이름"})
     assert summary["est"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Task 15a — 산업 축 데이터셋(vacancy_industry/insured_industry)
+# ---------------------------------------------------------------------------
+
+def test_industry_axis_dataset_gets_the_same_checks_as_its_pair(tmp_path):
+    """산업 축도 시군구 축이다 — 시군구 완전성·총계 검산을 똑같이 받아야 한다."""
+    fetchers = {"vacancy_industry": lambda period: Fetched(_full_rows(period), _full_totals())}
+    summary = collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
+    assert summary["vacancy_industry"] == len(_REALISTIC_CODES)
+    assert (tmp_path / "vacancy_industry.json").exists()
+
+
+def test_industry_axis_dataset_fails_when_sigungu_are_missing(tmp_path):
+    fetchers = {"vacancy_industry": lambda period: Fetched(_full_rows(period)[:3], _full_totals())}
+    with pytest.raises(checks.CheckFailed):
+        collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
+    assert not list(tmp_path.iterdir())
+
+
+def test_industry_axis_dataset_fails_without_totals(tmp_path):
+    """R18 — 총계를 못 받았으면 지어내지 않고 실패한다."""
+    fetchers = {"vacancy_industry": lambda period: Fetched(_full_rows(period), None)}
+    with pytest.raises(checks.CheckFailed):
+        collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
