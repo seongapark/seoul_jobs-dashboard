@@ -8,6 +8,12 @@ on:
     - cron: "0 1 5 * *"
   workflow_dispatch:
 
+# 커밋 단계가 data/*.json 을 이 저장소에 직접 푸시한다 — 기본 GITHUB_TOKEN 이
+# 읽기 전용이면(요즘 조직 기본값) git push 가 매번 실패해 자동 수집이 영영
+# 데이터를 못 올린다. pages.yml 처럼 필요한 권한을 명시한다.
+permissions:
+  contents: write
+
 jobs:
   collect:
     runs-on: ubuntu-latest

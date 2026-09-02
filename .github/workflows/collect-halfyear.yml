@@ -9,6 +9,11 @@ on:
     - cron: "0 1 20 6,12 *"
   workflow_dispatch:
 
+# collect-monthly.yml 과 같은 이유 — 커밋 단계가 git push 를 한다. 기본
+# GITHUB_TOKEN 이 읽기 전용이면 매번 실패한다.
+permissions:
+  contents: write
+
 jobs:
   collect:
     runs-on: ubuntu-latest
