@@ -86,6 +86,47 @@ export async function load(base = "../data") {
   return Object.fromEntries([...required, ...optional]);
 }
 
+// I4 — 스펙 §5.2 "마지막 성공 시점". 왜 45일인가:
+//
+// 수집 실패는 조용하다. 검사가 하나라도 어긋나면 워크플로가 죽어 커밋 단계에
+// 닿지 못하고, data/*.json 은 지난달 것이 그대로 남는다(그게 옳은 설계다 —
+// 절반만 갱신된 상태가 가장 나쁘다). 그런데 화면 헤더는 그 파일의 **자료
+// 기준월**만 보여주므로, 수집이 석 달 실패해도 화면은 아무 말 없이 옛
+// 기준월을 최신인 양 띄운다. 스펙이 그 이유까지 적었다 — "센터가 오래된 값을
+// 최신인 줄 알고 인용하는 일이 없어야 한다."
+//
+// 임계는 수집 주기에서 나온다. `.github/workflows/collect-monthly.yml` 이
+// 매월 5일에 도니까 연속 두 번의 성공은 28~31일 간격이다. 그래서
+//   - 31일보다 넉넉히 크게(정상 주기와 cron 지연을 오탐하지 않게)
+//   - 62일(=한 번 걸렀을 때 다음 성공까지)보다는 작게
+// 잡아야 "한 번의 실패"가 실제로 드러난다. 45일이 그 사이에서 양쪽에 여유가
+// 가장 고른 값이다. 더 짧게 잡으면 늦게 도는 잡마다 배너가 떠 사람이 배너를
+// 무시하게 되고, 더 길게 잡으면 한 달치 결측이 조용히 지나간다.
+export const STALE_AFTER_DAYS = 45;
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+// 배너에 쓸 문구를 낸다 — 신선하면 null(배너 없음). 순수 함수라 `now` 를
+// 주입받는다(테스트가 시계를 기다리지 않는다).
+//
+// collected_at 이 없거나 못 읽는 값이면 **조용히 넘어가지 않고** 그 사실을
+// 띄운다. 침묵은 "최신"과 구별되지 않는데, 이 화면에서 그 둘을 헷갈리는 것이
+// 정확히 스펙이 막으려던 사고다.
+export function staleNotice(dataset, now = new Date()) {
+  const stamp = dataset?.collected_at;
+  if (!stamp) return "마지막 수집 시점을 알 수 없습니다 — 값이 최신인지 확인하세요.";
+  const collected = new Date(stamp);
+  if (Number.isNaN(collected.getTime())) {
+    return "마지막 수집 시점을 읽지 못했습니다 — 값이 최신인지 확인하세요.";
+  }
+  const days = Math.floor((now.getTime() - collected.getTime()) / MS_PER_DAY);
+  if (days <= STALE_AFTER_DAYS) return null;
+  // 날짜는 스탬프 문자열에서 그대로 잘라 쓴다(UTC 기준) — 보는 사람의 시간대에
+  // 따라 하루씩 달라 보이지 않게 한다.
+  const date = String(stamp).slice(0, 10).replace(/-/g, ".");
+  return `마지막 수집 성공: ${date} (${days}일째 갱신 없음) — 값이 최신이 아닐 수 있습니다.`;
+}
+
 const ROUTES = ["overview", "occupation", "industry", "center"];
 const SCOPES = ["수도권", "서울", "경기", "인천"];
 

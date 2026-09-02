@@ -1,4 +1,4 @@
-import { load, parseSelection, selectionHash, optionsFor, reconcileForSido, switcherRows } from "./data.js";
+import { load, parseSelection, selectionHash, optionsFor, reconcileForSido, switcherRows, staleNotice } from "./data.js";
 import { esc, AXISLINE_HTML } from "./components.js";
 
 // 지역 선택지는 서울·경기·인천 셋으로 고정한다(R30) — 그 밖의 시도는 이
@@ -110,6 +110,17 @@ async function main() {
   const store = await load();
   document.getElementById("headerDate").textContent =
     store.vacancy.period.replace(/(\d{4})(\d{2})/, "$1.$2");
+
+  // I4 — 스펙 §5.2. #staleBanner 는 마크업만 있고 아무도 건드리지 않아 죽어
+  // 있었다. 바로 위 헤더가 **자료 기준월**만 보여주므로, 수집이 몇 달 실패해도
+  // (검사가 어긋나면 커밋 자체를 안 하므로 옛 파일이 그대로 남는다) 화면은
+  // 아무 말 없이 옛 기준월을 최신인 양 띄운다. 판정 기준은 store.vacancy 의
+  // collected_at 이다 — 헤더가 보여주는 기준월이 바로 그 파일에서 오므로,
+  // "이 화면이 하는 주장"과 "그 주장의 신선도"가 같은 파일을 가리킨다.
+  const notice = staleNotice(store.vacancy);
+  const banner = document.getElementById("staleBanner");
+  banner.textContent = notice ?? "";
+  banner.hidden = notice == null;
 
   wireNavDelegation();
 
