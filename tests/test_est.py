@@ -25,28 +25,33 @@ def test_collect_shapes_rows():
     # DT 가 "-" 인 행(결측)이 걸러지는지도 같이 본다.
     def fake_fetch(table, *, item, obj_l1, obj_l2, obj_l3, periods, recent, api_key, get=None):
         return [
-            {"PRD_DE": "202601", "DT": "109,560", "C1": obj_l1,
-             "C2": obj_l2, "C3": "keco2026_", "ITM_ID": item},       # 전직종
-            {"PRD_DE": "202601", "DT": "31,049", "C1": obj_l1,
-             "C2": obj_l2, "C3": "keco2026_0", "ITM_ID": item},      # 0 대분류
-            {"PRD_DE": "202601", "DT": "26,828", "C1": obj_l1,
-             "C2": obj_l2, "C3": "keco2026_02", "ITM_ID": item},     # 02 중분류
+            {"PRD_DE": "202601", "DT": "109,560", "C1": obj_l1, "C2": obj_l2,
+             "C3": "keco2026_", "C3_NM": "전체", "ITM_ID": item},       # 전직종
+            {"PRD_DE": "202601", "DT": "31,049", "C1": obj_l1, "C2": obj_l2,
+             "C3": "keco2026_0", "C3_NM": "경영·행정·사무직", "ITM_ID": item},  # 0 대분류
+            {"PRD_DE": "202601", "DT": "26,828", "C1": obj_l1, "C2": obj_l2,
+             "C3": "keco2026_02", "C3_NM": "금융·보험직", "ITM_ID": item},      # 02 중분류
             {"PRD_DE": "202601", "DT": "-", "C1": obj_l1,
              "C2": obj_l2, "C3": "keco2026_99", "ITM_ID": item},     # 결측 -> 버려져야 함
+            {"PRD_DE": "202601", "DT": "7", "C1": obj_l1, "C2": obj_l2,
+             "C3": "keco2026_03", "ITM_ID": item},   # C3_NM 없음 -> None 이어야 함
         ]
 
     rows = est.collect(["202601"], api_key="KEY", fetch=fake_fetch)
     matches = [r for r in rows
                if r["item"] == "채용계획인원" and r["sido"] == "11" and r["size"] == "전규모"]
 
-    # 결측(DT="-") 행 하나는 버려지고 나머지 3행만 남아야 한다.
-    assert len(matches) == 3
-    assert {r["occupation"] for r in matches} == {"", "0", "02"}
+    # 결측(DT="-") 행 하나는 버려지고 나머지 4행만 남아야 한다.
+    assert len(matches) == 4
+    assert {r["occupation"] for r in matches} == {"", "0", "02", "03"}
     assert "99" not in {r["occupation"] for r in matches}
 
     values = {r["occupation"]: r["value"] for r in matches}
-    assert values == {"": 109560, "0": 31049, "02": 26828}
+    assert values == {"": 109560, "0": 31049, "02": 26828, "03": 7}
     assert all(r["period"] == "202601" for r in matches)
+
+    names = {r["occupation"]: r["occupation_name"] for r in matches}
+    assert names == {"": "전체", "0": "경영·행정·사무직", "02": "금융·보험직", "03": None}
 
 
 def test_sido_object_codes_map_to_the_administrative_standard_code_eis_uses():
@@ -98,25 +103,30 @@ def test_collect_industry_shapes_rows():
         assert table == est.INDUSTRY_TABLE
         assert obj_l3 == "ALL"
         return [
-            {"PRD_DE": "202601", "DT": "1,234,567", "C1": obj_l1,
-             "C2": obj_l2, "C3": est.INDUSTRY_PREFIX + "11S000", "ITM_ID": item},  # 전산업
-            {"PRD_DE": "202601", "DT": "8,053", "C1": obj_l1,
-             "C2": obj_l2, "C3": est.INDUSTRY_PREFIX + "11SCX0", "ITM_ID": item},  # C.제조업
-            {"PRD_DE": "202601", "DT": "421", "C1": obj_l1,
-             "C2": obj_l2, "C3": est.INDUSTRY_PREFIX + "11SDX0", "ITM_ID": item},  # D.전기가스업
+            {"PRD_DE": "202601", "DT": "1,234,567", "C1": obj_l1, "C2": obj_l2,
+             "C3": est.INDUSTRY_PREFIX + "11S000", "C3_NM": "전산업", "ITM_ID": item},
+            {"PRD_DE": "202601", "DT": "8,053", "C1": obj_l1, "C2": obj_l2,
+             "C3": est.INDUSTRY_PREFIX + "11SCX0", "C3_NM": "제조업", "ITM_ID": item},
+            {"PRD_DE": "202601", "DT": "421", "C1": obj_l1, "C2": obj_l2,
+             "C3": est.INDUSTRY_PREFIX + "11SDX0", "C3_NM": "전기가스업", "ITM_ID": item},
             {"PRD_DE": "202601", "DT": "-", "C1": obj_l1,
              "C2": obj_l2, "C3": est.INDUSTRY_PREFIX + "11SZZ0", "ITM_ID": item},  # 결측 -> 버려져야 함
+            {"PRD_DE": "202601", "DT": "3", "C1": obj_l1, "C2": obj_l2,
+             "C3": est.INDUSTRY_PREFIX + "11SEX0", "ITM_ID": item},  # C3_NM 없음 -> None 이어야 함
         ]
 
     rows = est.collect_industry(["202601"], api_key="KEY", fetch=fake_fetch)
     matches = [r for r in rows
                if r["item"] == "채용인원" and r["sido"] == "11" and r["size"] == "전규모"]
 
-    # 결측(DT="-") 행 하나는 버려지고 나머지 3행만 남아야 한다.
-    assert len(matches) == 3
-    assert {r["industry"] for r in matches} == {"11S000", "11SCX0", "11SDX0"}
+    # 결측(DT="-") 행 하나는 버려지고 나머지 4행만 남아야 한다.
+    assert len(matches) == 4
+    assert {r["industry"] for r in matches} == {"11S000", "11SCX0", "11SDX0", "11SEX0"}
     assert "11SZZ0" not in {r["industry"] for r in matches}
 
     values = {r["industry"]: r["value"] for r in matches}
-    assert values == {"11S000": 1234567, "11SCX0": 8053, "11SDX0": 421}
+    assert values == {"11S000": 1234567, "11SCX0": 8053, "11SDX0": 421, "11SEX0": 3}
     assert all(r["period"] == "202601" for r in matches)
+
+    names = {r["industry"]: r["industry_name"] for r in matches}
+    assert names == {"11S000": "전산업", "11SCX0": "제조업", "11SDX0": "전기가스업", "11SEX0": None}

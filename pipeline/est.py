@@ -109,6 +109,7 @@ def collect(periods, *, api_key, fetch=kosis.fetch):
                             "sido": SIDO[sido_key],
                             "size": size_name,
                             "occupation": str(raw.get("C3", "")).replace(prefix, ""),
+                            "occupation_name": raw.get("C3_NM"),
                             "item": item_name,
                             "value": value,
                         })
@@ -135,6 +136,7 @@ def collect_industry(periods, *, api_key, fetch=kosis.fetch):
                             "sido": SIDO[sido_key],
                             "size": size_name,
                             "industry": str(raw.get("C3", "")).replace(INDUSTRY_PREFIX, ""),
+                            "industry_name": raw.get("C3_NM"),
                             "item": item_name,
                             "value": value,
                         })
