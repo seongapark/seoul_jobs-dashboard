@@ -226,7 +226,19 @@ def _normalize(rows: list[dict], period: str) -> list[dict]:
                     f"그리드가 돌려준 마감년월({seen_label})이 요청한 closYm({period})과 "
                     "다르다 — closYm 이 안 먹었을 수 있다. 조용히 다른 달을 쓰지 않는다.")
             fixed.setdefault(PERIOD_COLUMN, seen_label)
-        fixed.setdefault(PERIOD_COLUMN, _period_label(period))
+        elif PERIOD_COLUMN not in fixed:
+            # 리뷰 Important 2 — 요청한 달을 지어내 도장찍지 않는다. 예전엔
+            # 여기서 _period_label(period) 로 채웠는데, 그러면 위의 closYm
+            # 교차검증이 "헤더에 접두가 붙어 있을 때만" 도는 조건부가 된다.
+            # EIS 가 접두를 안 붙이는 순간 그리드가 무엇을 돌려주든 모든 행이
+            # 요청한 달로 찍히고, 24개월 백필이 같은 달로 다 채워질 수 있다.
+            # PERIOD_COLUMN 은 설계상 항상 열 축이므로(위 PERIOD_COLUMN 참고)
+            # 접두도 리터럴 컬럼도 없으면 "이 그리드는 이 모듈이 생각하는 것이
+            # 아니다"라는 뜻이다 — 시끄럽게 실패한다.
+            raise FetchError(
+                f"행에 마감년월이 없다 — 측정값 컬럼에 '{_period_label(period)}_' 접두도, "
+                f"리터럴 {PERIOD_COLUMN!r} 컬럼도 없다. 요청한 달을 지어내 찍지 않는다. "
+                f"실제 컬럼: {sorted(row)}")
         out.append(fixed)
     return out
 
@@ -312,6 +324,16 @@ def _fetch_series(spec: Spec, periods, *, browser, get, fetch, sleep, log) -> li
     한 달이 실패하면 그 달만 건너뛴다 — 24개월 백필이 한 달 때문에 통째로
     죽으면 안 된다. 다만 건너뛴 달은 반드시 로그로 남기고, 실패가 절반을
     넘으면 `SeriesBackfillError` 를 낸다(조용한 반쪽 수집 금지).
+
+    **0행도 실패다 (리뷰 Critical 1).** 예외를 세는 것만으로는 부족하다:
+    그리드가 깨끗이 받아지고 파싱까지 됐는데 `_metro_only` 가 하나도 못
+    맞추면(시도 라벨이 '서울' → '서울특별시' 로 바뀌기만 해도 그렇다) 예외
+    없이 달마다 0행이 나온다. 그 아래에는 그물이 없다 — `run_series` 에는
+    `check_not_all_zero` 의 짝이 없고 `check_series_shape([])`/
+    `check_series_months([])` 는 둘 다 무사통과라, 빈 시계열 파일이 새
+    `collected_at` 과 함께 조용히 덮어써진다. 그래서 **필터 뒤 0행이 된 달을
+    실패한 달로 세어** 절반 규칙이 작동하게 하고, 백필 전체가 0행이면 그
+    자체로 예외를 올린다.
     """
     periods = list(periods)
     rows: list[dict] = []
@@ -321,15 +343,27 @@ def _fetch_series(spec: Spec, periods, *, browser, get, fetch, sleep, log) -> li
             sleep(SERIES_PAUSE_SECONDS)     # 정중함 — 몰아치지 않는다
         try:
             grid = _grid(spec, period, browser=browser, get=get, fetch=fetch)
-            rows.extend(spec.parse(_metro_only(_normalize(grid.rows, period), spec)))
+            month = spec.parse(_metro_only(_normalize(grid.rows, period), spec))
         except Exception as error:          # noqa: BLE001 — 한 달 실패는 건너뛴다
             failed.append(period)
             log(f"{period} 수집 실패 — 건너뛴다: {error!r}")
+            continue
+        if not month:
+            failed.append(period)
+            log(f"{period} 수집 결과가 0행이다 — 실패로 센다 "
+                f"(그리드는 받았지만 {spec.region!r} 축에서 수도권 이름을 하나도 "
+                f"못 맞췄다: 라벨 표기가 바뀌었을 수 있다)")
+            continue
+        rows.extend(month)
 
     if failed and len(failed) * 2 > len(periods):
         raise SeriesBackfillError(
             f"{len(periods)}개월 중 {len(failed)}개월이 실패했다(절반 초과): {failed} — "
             "반쪽짜리 이력을 조용히 쓰지 않는다.")
+    if not rows:
+        raise SeriesBackfillError(
+            f"{len(periods)}개월을 다 돌았는데 남은 행이 하나도 없다 — 빈 시계열을 "
+            "새 collected_at 과 함께 덮어쓰지 않는다.")
     return rows
 
 

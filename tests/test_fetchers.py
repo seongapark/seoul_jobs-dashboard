@@ -247,3 +247,88 @@ def test_series_keys_match_the_screen_file_names():
     built = fetchers.series_fetchers(["202607"], browser=object(), get=_fake_get(),
                                      fetch=_FakeGrid(), sleep=lambda s: None)
     assert set(built) == {"vacancy_series", "insured_series"}
+
+
+# ---------------------------------------------------------------------------
+# 리뷰 Critical 1 — 예외 없이 0행이 나오는 달도 실패로 센다.
+#
+# 그리드가 깨끗이 받아지고 파싱까지 됐는데 _metro_only 가 하나도 못 맞추면
+# (시도 라벨이 '서울' -> '서울특별시' 로 바뀌기만 해도) 예외가 없다. 그 아래에는
+# 그물이 없다 — run_series 에는 check_not_all_zero 의 짝이 없고
+# check_series_shape([])/check_series_months([]) 는 둘 다 무사통과라, 빈
+# 시계열 파일이 새 collected_at 과 함께 조용히 덮어써진다.
+# ---------------------------------------------------------------------------
+
+def _renamed_sido_grid(period):
+    """EIS 가 시도 라벨 표기만 바꾼 상황 — 예외는 없고 필터가 전부 버린다."""
+    label = f"{period[:4]}년 {period[4:]}월"
+    rows = [{"(근무지역)시도": name,
+             f"{label}_유효구인인원(전체)": "10",
+             f"{label}_유효구직자수(전체)": "100"}
+            for name in ("서울특별시", "경기도", "인천광역시")]
+    return olap.ParsedGrid(rows, [])
+
+
+def test_series_month_filtered_down_to_zero_rows_counts_as_failed(recorded_layout):
+    """0행이 된 달은 '성공'이 아니다 — 실패로 세어 절반 규칙이 작동하게 한다."""
+    periods = ["202605", "202606", "202607"]
+    # 키는 URL 부분문자열이고 먼저 넣은 것이 이긴다 — 겹치지 않게 전부 closYm= 로 준다
+    per_url = {f"closYm={p}": (_renamed_sido_grid(p) if p == "202606" else _series_grid(p))
+               for p in periods}
+    grid = _FakeGrid(per_url=per_url)
+    logged = []
+    built = fetchers.series_fetchers(periods, browser=object(), get=_fake_get(),
+                                     fetch=grid, sleep=lambda s: None, log=logged.append)
+
+    rows = built["vacancy_series"]()
+
+    assert {r["period"] for r in rows} == {"202605", "202607"}
+    assert any("202606" in line and "0행" in line for line in logged)
+
+
+def test_series_raises_when_every_month_is_filtered_down_to_zero(recorded_layout):
+    """라벨 표기가 바뀌어 전 기간이 0행이 되면 빈 파일을 덮어쓰지 않고 실패한다."""
+    periods = ["202605", "202606", "202607"]
+    grid = _FakeGrid(result=_renamed_sido_grid("202607"),
+                     per_url={p: _renamed_sido_grid(p) for p in periods})
+    built = fetchers.series_fetchers(periods, browser=object(), get=_fake_get(),
+                                     fetch=grid, sleep=lambda s: None,
+                                     log=lambda line: None)
+
+    with pytest.raises(fetchers.SeriesBackfillError):
+        built["vacancy_series"]()
+
+
+def test_series_never_returns_an_empty_backfill(recorded_layout):
+    """받을 달이 하나도 없어도 '성공'으로 빈 이력을 내려보내지 않는다."""
+    built = fetchers.series_fetchers([], browser=object(), get=_fake_get(),
+                                     fetch=_FakeGrid(), sleep=lambda s: None)
+    with pytest.raises(fetchers.SeriesBackfillError):
+        built["vacancy_series"]()
+
+
+# ---------------------------------------------------------------------------
+# 리뷰 Important 2 — 요청한 달을 지어내 도장찍지 않는다.
+# ---------------------------------------------------------------------------
+
+def test_rows_without_any_period_column_are_rejected(recorded_layout):
+    """접두도 리터럴 마감년월도 없으면 실패한다 — 예전엔 요청한 달로 채워서,
+    closYm 교차검증이 '헤더에 접두가 있을 때만' 도는 조건부가 됐다."""
+    rows = [{"(근무지역)시도": "서울",
+             "유효구인인원(전체)": "10", "유효구직자수(전체)": "100"}]
+    grid = _FakeGrid(result=olap.ParsedGrid(rows, []))
+    built = fetchers.monthly_fetchers(browser=object(), cm=_CM(), get=_fake_get(), fetch=grid)
+
+    with pytest.raises(fetchers.FetchError):
+        built["vacancy_sido"]("202607")
+
+
+def test_a_literal_period_column_is_accepted(recorded_layout):
+    """마감년월이 행 축에 있어 리터럴 컬럼으로 오는 경우는 그대로 받는다."""
+    rows = [{"(근무지역)시도": "서울", "마감년월": "2026년 07월",
+             "유효구인인원(전체)": "10", "유효구직자수(전체)": "100"}]
+    grid = _FakeGrid(result=olap.ParsedGrid(rows, []))
+    built = fetchers.monthly_fetchers(browser=object(), cm=_CM(), get=_fake_get(), fetch=grid)
+
+    fetched = built["vacancy_sido"]("202607")
+    assert fetched.rows[0]["period"] == "202607"
