@@ -16,20 +16,56 @@ R4 — 시도 파일은 따로.
 _effective_expected_codes 의 docstring 참고(요약: center_map.json 이 인천
 개편 전후 코드를 영구히 함께 보존해서, raw 70개짜리 완전성은 실데이터로
 "영원히" 만족 불가능하다).
+
+R18 (Fix round 1 컨트롤러 지시) — checks.check_against_total 을 실제 경로에서
+호출한다. R13 은 "총계 행을 진짜 검산으로 쓴다"는 규칙을 만들었지만, 애초
+구현은 run_monthly 가 그 함수를 호출하지 않아 죽은 코드였다 — 그리드 총계
+행이 시군구 합과 어긋나도 아무도 못 잡았다. 그래서 fetcher 계약을 넓힌다:
+각 fetcher 는 rows 뿐 아니라 그 rows 의 총계(totals)를 함께 돌려준다
+(`Fetched(rows, totals)`). totals 는 {필드명: 총계값} 매핑이거나, 그리드가
+총계를 못 줬으면 명시적으로 None 이다 — 조용히 검사를 건너뛰지 않는다.
+총계가 있어야 하는 데이터셋(시군구 검사 대상인 vacancy/placement/insured)
+이 None 으로 오면 그 자체가 실패다(그리드 모양이 바뀌어 총계 파싱이
+조용히 깨졌다는 신호일 수 있다 — "총계가 없으니 통과"는 절대 선택지가
+아니다).
 """
 from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import NamedTuple
 
 from pipeline import checks
 
 FIELD_OF = {"vacancy": "vacancy", "placement": "placements",
             "insured": "insured", "mobility": "movers"}
 
+# R18 — 데이터셋별로 검산할 (필드, mode) 목록. mode 의 비대칭은 checks.py
+# check_against_total 의 docstring 을 그대로 따른다: 구인/취업/피보험 같은
+# "건 하나 = 지역 하나" 측정값은 equality, 유효구직건수처럼 "건 하나가
+# 지역을 여럿 낼 수 있는" 측정값만 at_least 다.
+MEASURE_MODES: dict[str, tuple[tuple[str, str], ...]] = {
+    "vacancy": (("vacancy", "equality"), ("seekers", "at_least")),
+    "placement": (("placements", "equality"),),
+    "insured": (("insured", "equality"),),
+}
+
 _SIDO_SUFFIX = "_sido"
 _SIGUNGU_CHECKED = ("vacancy", "placement", "insured")
+
+
+class Fetched(NamedTuple):
+    """fetcher 하나의 결과 — 행과, 그 행들의 합이 맞아야 하는 총계(R18).
+
+    totals 는 그리드가 별도로 준 총계 행에서 온 {필드: 값} 매핑이다. 총계를
+    못 받았으면 조용히 검사를 건너뛰지 않고 반드시 None 이라고 명시한다 —
+    시군구 완전성 검사 대상(vacancy/placement/insured, _sido 접미사 제외)
+    데이터셋이 totals=None 으로 오면 run_monthly 가 그 자체를 실패로 본다.
+    """
+
+    rows: list[dict]
+    totals: dict | None
 
 
 def _base_name(name: str) -> str:
@@ -68,27 +104,38 @@ def _effective_expected_codes(rows, cm):
 
 
 def run_monthly(period, *, out_dir, fetchers, cm, previous=None):
-    collected = {name: fetch(period) for name, fetch in fetchers.items()}
+    collected: dict[str, Fetched] = {name: fetch(period) for name, fetch in fetchers.items()}
 
-    for name, rows in collected.items():
+    for name, fetched in collected.items():
+        rows = fetched.rows
         base = _base_name(name)
         field = FIELD_OF.get(base, base)
         if not name.endswith(_SIDO_SUFFIX) and base in _SIGUNGU_CHECKED:
             expected = _effective_expected_codes(rows, cm)
             checks.check_regions(rows, _ExpectedCodes(expected))
             checks.check_incheon_codes(rows)
+            # R18 — 총계 검산. 그리드가 총계를 못 줬으면(totals=None) 조용히
+            # 넘어가지 않고 그 자체를 실패로 본다.
+            if fetched.totals is None:
+                raise checks.CheckFailed(
+                    f"{name}: 그리드 총계가 없다 — 검산 없이 통과시킬 수 없다")
+            for total_field, mode in MEASURE_MODES.get(base, ()):
+                checks.check_against_total(rows, fetched.totals, field=total_field, mode=mode)
         checks.check_not_all_zero(rows, field)
+        # previous 는 지난달에 파일로 쓴 rows 그대로(raw list)다 — Fetched 로
+        # 감싸지 않는다. run_monthly 가 쓰는 파일 자체가 {"rows": [...]} 모양
+        # 이므로 "지난달 산출물"을 자연스럽게 그대로 넘길 수 있게 한다.
         checks.check_not_identical_to_previous(rows, (previous or {}).get(name))
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    for name, rows in collected.items():
+    for name, fetched in collected.items():
         (out_dir / f"{name}.json").write_text(
-            json.dumps({"period": period, "collected_at": stamp, "rows": rows},
+            json.dumps({"period": period, "collected_at": stamp, "rows": fetched.rows},
                        ensure_ascii=False),
             encoding="utf-8")
-    return {name: len(rows) for name, rows in collected.items()}
+    return {name: len(fetched.rows) for name, fetched in collected.items()}
 
 
 def run_halfyear(period, *, out_dir, api_key, collector=None):

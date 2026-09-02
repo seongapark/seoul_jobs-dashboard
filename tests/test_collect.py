@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import pytest
 from pipeline import collect, checks, center_map
+from pipeline.collect import Fetched
 
 ROOT = Path(__file__).resolve().parents[1]
 CM = center_map.load(ROOT / "data/center_map.json")
@@ -27,8 +28,13 @@ def _full_rows(period="202607"):
              "vacancy": 10, "seekers": 100} for code in _REALISTIC_CODES]
 
 
+def _full_totals():
+    """_full_rows() 와 정확히 맞아떨어지는 총계 — vacancy=equality, seekers=at_least."""
+    return {"vacancy": 10 * len(_REALISTIC_CODES), "seekers": 100 * len(_REALISTIC_CODES)}
+
+
 def test_writes_files_when_checks_pass(tmp_path):
-    fetchers = {"vacancy": lambda period: _full_rows(period)}
+    fetchers = {"vacancy": lambda period: Fetched(_full_rows(period), _full_totals())}
     summary = collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
     written = json.loads((tmp_path / "vacancy.json").read_text(encoding="utf-8"))
     assert written["period"] == "202607"
@@ -38,7 +44,7 @@ def test_writes_files_when_checks_pass(tmp_path):
 
 def test_writes_nothing_when_a_check_fails(tmp_path):
     """검사가 실패하면 기존 데이터를 건드리지 않는다 — 절반만 갱신되는 상태가 최악이다."""
-    fetchers = {"vacancy": lambda period: _full_rows(period)[:3]}
+    fetchers = {"vacancy": lambda period: Fetched(_full_rows(period)[:3], _full_totals())}
     with pytest.raises(checks.CheckFailed):
         collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
     assert not list(tmp_path.iterdir())
@@ -51,7 +57,7 @@ def test_does_not_touch_network(monkeypatch, tmp_path):
         raise AssertionError("테스트가 네트워크에 나갔다")
 
     monkeypatch.setattr(requests, "get", boom)
-    fetchers = {"vacancy": lambda period: _full_rows(period)}
+    fetchers = {"vacancy": lambda period: Fetched(_full_rows(period), _full_totals())}
     collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
 
 
@@ -63,7 +69,7 @@ def test_dual_era_incheon_rows_still_fail_even_though_70_is_complete(tmp_path):
     가 잡아야 한다 — run_monthly 는 두 검사를 다 거친다."""
     rows = [{"period": "202607", "sigungu": code, "center": CM.center_of(code),
              "vacancy": 1, "seekers": 1} for code in CM.codes()]  # 진짜 70개, 두 era 다 포함
-    fetchers = {"vacancy": lambda period: rows}
+    fetchers = {"vacancy": lambda period: Fetched(rows, {"vacancy": 70, "seekers": 70})}
     with pytest.raises(checks.CheckFailed):
         collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
     assert not list(tmp_path.iterdir())
@@ -73,7 +79,44 @@ def test_missing_region_still_fails_when_neither_era_present(tmp_path):
     """옛 코드도 신설 코드도 전혀 없는 인천 개편 그룹은 여전히 '빠졌다'로 잡아야 한다
     — era 완화가 '아무 근거 없이' 요구를 없애 주면 안 된다."""
     rows = [r for r in _full_rows() if r["sigungu"] not in ("28125", "28155")]  # 제물포·영종 통째로 누락
-    fetchers = {"vacancy": lambda period: rows}
+    fetchers = {"vacancy": lambda period: Fetched(rows, _full_totals())}
+    with pytest.raises(checks.CheckFailed):
+        collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
+    assert not list(tmp_path.iterdir())
+
+
+# --- R18: check_against_total 을 실제 경로에서 강제한다 --------------------------
+#
+# R13 에서 만든 check_against_total 이 애초엔 run_monthly 에서 호출되지 않아
+# 죽은 코드였다 — 그리드 총계 행이 시군구 합과 어긋나도 아무도 못 잡았다.
+# 이제 fetcher 는 rows 뿐 아니라 totals({필드: 총계})를 함께 돌려주고,
+# run_monthly 가 시군구 검사 대상 데이터셋(vacancy/placement/insured)마다
+# 그 총계를 실제로 검산한다.
+
+def test_writes_nothing_when_total_mismatches(tmp_path):
+    """유효구인인원은 equality — 그리드 총계가 시군구 합과 다르면 아무것도 안 쓴다."""
+    wrong_totals = {"vacancy": 10 * len(_REALISTIC_CODES) + 1, "seekers": 100 * len(_REALISTIC_CODES)}
+    fetchers = {"vacancy": lambda period: Fetched(_full_rows(period), wrong_totals)}
+    with pytest.raises(checks.CheckFailed):
+        collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
+    assert not list(tmp_path.iterdir())
+
+
+def test_writes_nothing_when_seekers_total_undershoots(tmp_path):
+    """유효구직건수는 at_least — 시군구 합이 총계에 못 미치면(행 소실) 실패."""
+    too_high_seekers_total = {"vacancy": 10 * len(_REALISTIC_CODES),
+                               "seekers": 100 * len(_REALISTIC_CODES) + 1}
+    fetchers = {"vacancy": lambda period: Fetched(_full_rows(period), too_high_seekers_total)}
+    with pytest.raises(checks.CheckFailed):
+        collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
+    assert not list(tmp_path.iterdir())
+
+
+def test_writes_nothing_when_total_is_missing_for_a_checked_dataset(tmp_path):
+    """총계가 있어야 하는 데이터셋이 totals=None 으로 오면 그 자체가 실패다 —
+    '총계가 없으니 조용히 통과'는 선택지가 아니다(그리드 모양이 바뀌어 총계
+    파싱이 조용히 깨졌다는 신호일 수 있다)."""
+    fetchers = {"vacancy": lambda period: Fetched(_full_rows(period), None)}
     with pytest.raises(checks.CheckFailed):
         collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
     assert not list(tmp_path.iterdir())
@@ -85,8 +128,8 @@ def test_missing_region_still_fails_when_neither_era_present(tmp_path):
 # (유효구직건수는 1인 다건이라 시군구 합이 시도 총계보다 커질 수 있다 —
 # checks.check_against_total 이 그 관계를 검산하지, run_monthly 가 시군구를
 # 더해 시도 값을 만들지는 않는다). fetchers 에 "<name>_sido" 키로 넣은
-# 콜백의 결과는 시군구 검사(완전성·인천 코드)를 건너뛰고 그대로
-# "<name>_sido.json" 에 쓴다.
+# 콜백의 결과는 시군구 검사(완전성·인천 코드·총계 검산)를 건너뛰고 그대로
+# "<name>_sido.json" 에 쓴다 — totals 는 굳이 필요 없어 None 으로 둔다.
 
 def test_writes_sido_file_from_separate_collector_not_summed(tmp_path):
     sido_rows = [
@@ -96,8 +139,8 @@ def test_writes_sido_file_from_separate_collector_not_summed(tmp_path):
         {"period": "202607", "sido": "00", "vacancy": 999, "seekers": 999},
     ]
     fetchers = {
-        "vacancy": lambda period: _full_rows(period),
-        "vacancy_sido": lambda period: sido_rows,
+        "vacancy": lambda period: Fetched(_full_rows(period), _full_totals()),
+        "vacancy_sido": lambda period: Fetched(sido_rows, None),
     }
     summary = collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
 
@@ -111,8 +154,9 @@ def test_writes_sido_file_from_separate_collector_not_summed(tmp_path):
 def test_sido_rows_skip_region_completeness_check(tmp_path):
     """시도 행은 시군구 완전성 검사 대상이 아니다 — 애초에 시군구가 아니다."""
     fetchers = {
-        "vacancy": lambda period: _full_rows(period),
-        "vacancy_sido": lambda period: [{"period": period, "sido": "11", "vacancy": 5, "seekers": 5}],
+        "vacancy": lambda period: Fetched(_full_rows(period), _full_totals()),
+        "vacancy_sido": lambda period: Fetched(
+            [{"period": period, "sido": "11", "vacancy": 5, "seekers": 5}], None),
     }
     summary = collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
     assert summary["vacancy_sido"] == 1
@@ -121,8 +165,9 @@ def test_sido_rows_skip_region_completeness_check(tmp_path):
 def test_writes_nothing_when_sido_check_fails(tmp_path):
     """시도 값이 전부 0이면(수집 실패) 시군구 파일도 함께 안 쓴다 — 절반 갱신 금지는 시도에도 적용."""
     fetchers = {
-        "vacancy": lambda period: _full_rows(period),
-        "vacancy_sido": lambda period: [{"period": period, "sido": "11", "vacancy": 0, "seekers": 0}],
+        "vacancy": lambda period: Fetched(_full_rows(period), _full_totals()),
+        "vacancy_sido": lambda period: Fetched(
+            [{"period": period, "sido": "11", "vacancy": 0, "seekers": 0}], None),
     }
     with pytest.raises(checks.CheckFailed):
         collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)

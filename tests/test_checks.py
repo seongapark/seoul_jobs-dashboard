@@ -110,3 +110,36 @@ def test_check_against_total_at_least_fails_when_under():
     total = {"seekers": 12}
     with pytest.raises(checks.CheckFailed):
         checks.check_against_total(rows, total, field="seekers", mode="at_least")
+
+
+# --- Fix round 1: 인천 개편 era 완화(pipeline.collect._effective_expected_codes)
+#     가 진짜로 새는 구멍이 아닌지 실측으로 고정한다 --------------------------------
+#
+# 그 완화 로직 자체는 pipeline/collect.py 에 있다(run_monthly 가 raw cm.codes()
+# 70개 대신, 관측된 인천 era 만 요구하도록 기대 코드 집합을 조정해 checks.
+# check_regions 에 넘긴다). 여기서는 조정된 기대 집합을 check_regions 에 직접
+# 먹여, "완화가 인천 밖으로 새지 않는다"는 것을 checks 모듈 레벨에서도 증명한다.
+from pipeline import collect  # noqa: E402
+
+_OLD_INCHEON_CODES = set(checks.INCHEON_OLD_TO_NEW.keys())
+_REALISTIC_CODES = sorted(CM.codes() - _OLD_INCHEON_CODES)  # 67개, 신설 코드만(post-reorg)
+
+
+def test_era_relaxation_still_fails_when_almost_everything_is_missing():
+    """제물포·영종(신설 인천 코드) 두 개만 있고 나머지 65개 시군구가 통째로 없다 —
+    인천 두 코드만 봐서는 '어느 era 인지' 확정할 근거가 되지만, 인천 밖 시군구가
+    빠진 것까지 완화가 눈감아 주면 안 된다."""
+    rows = [_row("28125"), _row("28155")]
+    expected = collect._effective_expected_codes(rows, CM)
+    with pytest.raises(checks.CheckFailed):
+        checks.check_regions(rows, collect._ExpectedCodes(expected))
+
+
+def test_era_relaxation_does_not_excuse_missing_non_incheon_region():
+    """인천 era 는 깨끗(신설 코드만, 일관됨)한데 강남구(11680) 하나가 빠졌다 —
+    era 완화가 인천 그룹에만 적용돼야지, 다른 지역 결측까지 덮어 주면 안 된다."""
+    rows = [_row(code) for code in _REALISTIC_CODES if code != "11680"]
+    expected = collect._effective_expected_codes(rows, CM)
+    with pytest.raises(checks.CheckFailed) as e:
+        checks.check_regions(rows, collect._ExpectedCodes(expected))
+    assert "11680" in str(e.value)
