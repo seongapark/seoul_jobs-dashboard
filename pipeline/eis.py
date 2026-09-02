@@ -155,10 +155,15 @@ def collect_insured(rows, cm) -> list[dict]:
 
 
 def collect_mobility(rows) -> list[dict]:
-    """시도 축 경력직 이동 행을 화면용 행으로 편다 (센터 매핑이 필요 없다)."""
+    """시도 축 경력직 이동 행을 화면용 행으로 편다 (센터 매핑이 필요 없다).
+
+    다른 시도 축 수집기(collect_vacancy_sido 등)와 같이 sido_code() 로
+    행정표준코드를 낸다 — 이름("서울")을 그대로 두면 est.py 와 join 이
+    안 되고, 수도권 밖 시도가 섞여도 조용히 넘어간다(R35).
+    """
     return [{
         "period": period_code(row["마감년월"]),
-        "sido": (row.get("(사업장)시도") or "").strip(),
+        "sido": sido_code(row.get("(사업장)시도")),
         "industry": (row.get("산업_대분류") or "").strip(),
         "prev_industry": (row.get("산업(이전)_대분류") or "").strip(),
         "movers": to_number(row.get("경력이동자수(월)")),

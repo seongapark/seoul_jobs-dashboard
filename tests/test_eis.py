@@ -68,6 +68,26 @@ def test_mobility_keeps_previous_industry():
     assert out[0]["movers"] == 1280
 
 
+def test_mobility_sido_is_the_administrative_standard_code():
+    """collect_vacancy_sido 등과 같이, collect_mobility 도 이름("서울")이 아니라
+    행정표준코드("11")를 내야 est.py 와 join 이 된다 — 여기만 이름 그대로
+    두면 수도권 세 시도 값이 필터 없이 섞인다(R35)."""
+    rows = [{"마감년월": "2026년 07월", "(사업장)시도": "서울",
+             "산업_대분류": "J 정보통신업", "산업(이전)_대분류": "M 전문, 과학 및 기술 서비스업",
+             "경력이동자수(월)": "1,280"}]
+    out = eis.collect_mobility(rows)
+    assert out[0]["sido"] == "11"
+
+
+def test_mobility_rejects_sido_outside_the_metro_area():
+    """다른 sido 수집기와 마찬가지로, 수도권 밖 시도를 조용히 넘기면 안 된다."""
+    rows = [{"마감년월": "2026년 07월", "(사업장)시도": "부산",
+             "산업_대분류": "J 정보통신업", "산업(이전)_대분류": "M 전문, 과학 및 기술 서비스업",
+             "경력이동자수(월)": "1"}]
+    with pytest.raises(eis.UnknownRegion):
+        eis.collect_mobility(rows)
+
+
 # ---------------------------------------------------------------------------
 # R2b — SIGUNGU_NAME_TO_CODE 는 임포트 시 한 번만 만들어진다
 # ---------------------------------------------------------------------------
