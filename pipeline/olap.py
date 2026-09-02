@@ -155,7 +155,12 @@ _PAGE_ADVANCE_WAIT_MS = 400
 # 대신 **본문이 실제로 바뀔 때까지 폴링**한다. 끝내 안 바뀌면 호출부가 예외를
 # 낸다(그 판정은 그대로 둔다 — 조용히 같은 페이지를 두 번 담지 않는다).
 _PAGE_RENDER_POLL_MS = 400
-_PAGE_RENDER_MAX_POLLS = 40      # 최대 16초
+_PAGE_RENDER_MAX_POLLS = 75      # 최대 30초
+# 200페이지짜리 걷기에서는 클릭 하나가 이따금 먹지 않는다(실측: 151페이지까지
+# 잘 가다가 152페이지에서 렌더가 안 바뀜). 한 번은 다시 눌러 본다 — 그래도
+# 안 바뀌면 예외다. "여러 번 누르다 보면 되겠지"가 아니라 **딱 한 번 더**이고,
+# 실패는 여전히 시끄럽다.
+_PAGE_CLICK_ATTEMPTS = 2
 
 # ---------------------------------------------------------------------------
 # R47 (Task 15a 실측, 2026-09-02) — 페이저는 "전체 페이지 목록"이 아니라 **창**이다.
@@ -397,8 +402,12 @@ def _walk_paginated_grid(
                 f"페이지를 {_MAX_PAGES}개까지 걸었는데도 끝이 안 난다 — 페이저가 "
                 "제자리를 도는 것으로 보고 잘렸을 수 있는 결과를 반환하지 않는다.")
 
-        _click_pager_label(page, str(page_number))
-        body = _body_after_render(page, prev_body)
+        body = prev_body
+        for _ in range(_PAGE_CLICK_ATTEMPTS):
+            _click_pager_label(page, str(page_number))
+            body = _body_after_render(page, prev_body)
+            if body and body != prev_body:
+                break
 
         if not body:
             raise OlapExtractionError(

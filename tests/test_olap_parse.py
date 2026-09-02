@@ -751,3 +751,30 @@ def test_window_labels_that_arrive_late_are_waited_for():
     grid = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
 
     assert {row[0] for row in grid.rows} == {row[0] for body in pages for row in body}
+
+
+def test_a_click_that_does_not_take_is_retried_once():
+    """실측(2026-09-02): 200페이지짜리 걷기에서 클릭 하나가 이따금 먹지 않는다
+    (151페이지까지 잘 가다가 152페이지에서 렌더가 안 바뀌었다). 한 번은 다시
+    눌러 보되, 그래도 안 바뀌면 여전히 예외다(위 테스트)."""
+    pages = _pages(12)
+
+    class _DropsOneClick(_FakePagedPage):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            self._dropped = False
+
+        def _click_index(self, index):
+            label = self._labels()[index]
+            if label == "4" and not self._dropped:
+                self._dropped = True
+                self.clicked.append(label)
+                return                      # 이 클릭은 먹지 않는다
+            super()._click_index(index)
+
+    page = _DropsOneClick(pages)
+
+    grid = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+
+    assert page._dropped
+    assert {row[0] for row in grid.rows} == {row[0] for body in pages for row in body}
