@@ -1,4 +1,4 @@
-import { load, parseSelection, selectionHash, optionsFor, reconcileForSido,
+import { load, parseSelection, selectionHash, optionsFor, reconcileSelectionForSido,
          resolveAxis, switcherRows, switcherSido, staleNotice } from "./data.js";
 import { esc, AXISLINE_HTML } from "./components.js";
 import { SIDO_OF_SCOPE } from "./tilemap.js";
@@ -70,19 +70,13 @@ function renderSwitcher(route, store, selection) {
 function wireSwitcher(selection, store) {
   const sidoEl = document.getElementById("selSido");
   sidoEl?.addEventListener("change", () => {
-    // R41 — 시도가 바뀌면 직종/산업 선택지가 통째로 달라진다.
-    // reconcileForSido(순수 함수, data.js)가 지금 선택이 새 목록에도
-    // 있으면 유지하고, 없으면 새 목록의 첫 값으로 떨어뜨린다.
-    // C1 — 축마다 자기 파일에서 목록을 다시 만든다(renderSwitcher 와 같은
-    // switcherRows). 여기서만 store.vacancy 를 쓰면 시도를 바꾼 순간 산업
-    // 선택이 "새 목록에 없다"고 판정돼 undefined 로 떨어진다.
-    const nextSido = sidoEl.value;
-    location.hash = selectionHash({
-      ...selection,
-      sido: nextSido,
-      occupation: reconcileForSido(switcherRows(store, "occupation") ?? [], selection, "occupation", nextSido),
-      industry: reconcileForSido(switcherRows(store, "industry") ?? [], selection, "industry", nextSido),
-    });
+    // 시도가 바뀌면 직종/산업 선택지가 통째로 달라진다(R41) — 다음 선택을
+    // 어떻게 화해시킬지는 전부 data.reconcileSelectionForSido 한 함수가 안다.
+    // 여기서 기준(어느 시도로 거를까)을 다시 계산하지 않는 것이 요점이다:
+    // 그러면 선택지 기준(renderSwitcher·resolveSelection)과 갈려, 센터별에서
+    // 지역을 바꾼 순간 직종이 몰래 바뀐다(재리뷰 지적, 그 함수의 주석 참고).
+    location.hash = selectionHash(
+      reconcileSelectionForSido(store, selection, sidoEl.value, SIDO_OF_SCOPE));
   });
 
   const bind = (id, field) => {

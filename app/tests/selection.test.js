@@ -5,7 +5,7 @@
 // 노드에서 직접 import 해 테스트할 수 없다. 그래서 이 로직은 data.js 에
 // 두고(순수 함수), app.js 는 그것을 불러 쓰기만 한다.
 import { parseSelection, selectionHash, optionsFor, reconcileForSido, resolveAxis,
-         switcherRows, switcherSido } from "../js/data.js";
+         reconcileSelectionForSido, switcherRows, switcherSido } from "../js/data.js";
 
 let failed = 0;
 const eq = (got, want, label) => {
@@ -115,6 +115,44 @@ eq(switcherSido({ route: "center", sido: "11", scope: "수도권" }, SIDO_OF_SCO
 eq(optionsFor(vacancyRows, "occupation", switcherSido({ route: "center", sido: "11", scope: "수도권" }, SIDO_OF_SCOPE)),
    ["경영·행정·사무직", "생산직", "판매직"],
    "수도권 칩에서는 세 시도의 직종이 모두 선택지가 된다");
+
+// 재리뷰 지적 — **화해 기준과 선택지 기준이 같은 함수를 써야 한다.**
+// app.js 는 세 자리에서 "어느 시도로 거를까"를 판단한다: renderSwitcher(선택지),
+// resolveSelection(렌더 시 확정), wireSwitcher(지역 select 변경 시 화해).
+// 앞의 둘은 switcherSido 를 쓰는데 마지막만 nextSido 를 그대로 쓰면 두 판단이
+// 갈린다. 센터별에서 그러면 이런 일이 난다: scope=수도권 · 직종=영업 인 채로
+// 지역 select 를 경기로 바꾸면 화해가 "경기 목록의 첫 값"으로 직종을 밀어내고,
+// 렌더는 그 값이 수도권 목록에도 있으니 그대로 받는다 — 지도 범위는 그대로인데
+// 직종만 몰래 바뀌어 카드 14·15 값이 통째로 달라진다.
+// 판단이 갈리지 않는지는 **합쳐진 결과**로 잰다 — 기준 함수만 따로 재면
+// "app.js 가 그 함수를 실제로 쓰는가"를 못 본다. 그래서 지역 select 변경의
+// 결과 전체를 내는 reconcileSelectionForSido 를 검사한다(app.js 의 핸들러는
+// 이 함수를 부르는 것 말고 아무 판단도 하지 않는다).
+// 재현 그대로: scope=수도권(=세 시도 전부) 인데 선택 직종은 서울에만 있는
+// '생산직'. 지역 select 를 경기로 바꿀 때 기준이 갈리면 '경기 목록의 첫 값'
+// (판매직)으로 밀려나고, 렌더 쪽은 그 값이 수도권 목록에도 있으니 그대로
+// 받아들인다 — 지도 범위는 그대로인데 직종만 바뀐다.
+const centerSelection = { route: "center", sido: "11", scope: "수도권", occupation: "생산직" };
+const afterSidoChange = reconcileSelectionForSido(storeWithIndustry, centerSelection, "41", SIDO_OF_SCOPE);
+eq(afterSidoChange.occupation, "생산직",
+   "센터별에서 지역 select 를 바꿔도 선택 직종이 몰래 바뀌지 않는다(기준은 지도 칩이다)");
+eq(afterSidoChange.sido, "41", "그래도 지역 select 값 자체는 따라간다(직종 선택지의 기준 지역이다)");
+eq(afterSidoChange.scope, "수도권", "지도 범위는 건드리지 않는다");
+
+// 지도 칩이 실제로 한 시도를 가리키면 그 목록으로 화해한다 — 잠가 버린 게 아니다.
+const inGyeonggiScope = { route: "center", sido: "11", scope: "경기", occupation: "경영·행정·사무직" };
+eq(reconcileSelectionForSido(storeWithIndustry, inGyeonggiScope, "11", SIDO_OF_SCOPE).occupation,
+   "판매직",
+   "지도 칩이 경기를 가리키면 경기에 없는 직종은 경기 목록의 첫 값으로 떨어진다");
+
+// 다른 라우트는 종전대로 지역 select 를 따른다(R41 의 원래 동작).
+const occupationRoute = { route: "occupation", sido: "11", scope: "수도권", occupation: "생산직" };
+eq(reconcileSelectionForSido(storeWithIndustry, occupationRoute, "41", SIDO_OF_SCOPE).occupation,
+   "판매직",
+   "직종별에서는 지역을 바꾸면 새 시도 목록으로 화해한다");
+// 그 라우트에 없는 축은 손대지 않는다(undefined 로 남는다).
+eq(reconcileSelectionForSido(storeWithIndustry, occupationRoute, "41", SIDO_OF_SCOPE).industry, undefined,
+   "선택이 애초에 없는 축은 값을 지어내지 않는다");
 
 eq(reconcileForSido(vacancyRows, { occupation: "생산직" }, "occupation", "11"), "생산직",
    "새 시도 목록에도 있으면 선택을 그대로 유지한다");

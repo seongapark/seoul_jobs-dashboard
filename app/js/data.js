@@ -298,3 +298,27 @@ export function reconcileForSido(rows, selection, field, nextSido) {
   if (selection[field] == null) return selection[field];
   return resolveAxis(rows, selection, field, nextSido);
 }
+
+// 지역 select 를 바꿨을 때의 다음 선택 전체. app.js 의 이벤트 핸들러가 이
+// 한 줄만 부르게 해서, **화해 기준을 정하는 판단이 두 곳으로 갈라질 수 없게**
+// 한다(재리뷰 지적).
+//
+// 갈라지면 이렇게 된다: 선택지를 거르는 기준(renderSwitcher·resolveSelection)은
+// switcherSido — 센터별이면 지도 칩(scope) — 인데 화해만 nextSido 를 그대로
+// 쓰면, 센터별에서 지역 select 를 바꾼 순간 직종이 그 시도 목록의 첫 값으로
+// 밀려나고 렌더 쪽은 그 값이 지금 목록에도 있으니 그냥 받아들인다. **지도
+// 범위는 그대로인데 직종만 몰래 바뀌어 카드 14·15 값이 통째로 달라진다** —
+// 사용자가 지시하지 않은 변화다. 그래서 기준을 여기 한 번만 계산한다.
+//
+// 지역 select 자체는 센터별에서도 남는다: 그 화면의 지도 범위는 칩이 정하지만
+// **직종 선택지의 기준 지역**은 여전히 이 select 다(switcherSido 가 scope 를
+// 쓰는 것은 칩이 특정 시도를 가리킬 때뿐이고, 수도권이면 세 시도를 다 연다).
+export function reconcileSelectionForSido(store, selection, nextSido, sidoOfScope) {
+  const next = { ...selection, sido: nextSido };
+  const sido = switcherSido(next, sidoOfScope);
+  return {
+    ...next,
+    occupation: reconcileForSido(switcherRows(store, "occupation") ?? [], selection, "occupation", sido),
+    industry: reconcileForSido(switcherRows(store, "industry") ?? [], selection, "industry", sido),
+  };
+}
