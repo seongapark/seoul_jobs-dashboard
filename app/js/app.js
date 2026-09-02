@@ -1,4 +1,4 @@
-import { load, parseSelection, selectionHash } from "./data.js";
+import { load, parseSelection, selectionHash, optionsFor, reconcileForSido } from "./data.js";
 import { esc } from "./components.js";
 
 // 지역 선택지는 서울·경기·인천 셋으로 고정한다(R30) — 그 밖의 시도는 이
@@ -8,17 +8,6 @@ const SIDO_OPTIONS = [
   { value: "41", label: "경기" },
   { value: "28", label: "인천" },
 ];
-
-// occupation/industry 선택지는 store.vacancy.rows(시군구 원자료, R20)의
-// 고유값을 가나다순으로 뽑는다. 빈 문자열은 뺀다 — est 의 "전직종 합계" 행이
-// occupation:"" 을 쓰므로, 안 빼면 그 빈 값이 선택지에 섞여 들어간다.
-function uniqueSorted(rows, field) {
-  const values = new Set();
-  for (const row of rows) {
-    if (row[field]) values.add(row[field]);
-  }
-  return [...values].sort((a, b) => a.localeCompare(b, "ko"));
-}
 
 function selectHtml({ id, label, options, value }) {
   const optionTags = options.map((opt) =>
@@ -35,12 +24,15 @@ function renderSwitcher(route, store, selection) {
     id: "selSido", label: "지역 선택", options: SIDO_OPTIONS, value: selection.sido,
   })];
 
+  // R41(리뷰 지적) — 지역으로 걸러야 한다. optionsFor 가 sigungu 앞 두
+  // 자리(행정표준코드 시도)로 거른다 — 안 거르면 데이터가 없는 (시도,직종)
+  // 조합을 고를 수 있어 카드 감춤 규칙이 전부 걸려 화면이 통째로 빈다.
   if (route === "occupation") {
-    const options = uniqueSorted(store.vacancy.rows, "occupation").map((v) => ({ value: v, label: v }));
+    const options = optionsFor(store.vacancy.rows, "occupation", selection.sido).map((v) => ({ value: v, label: v }));
     selects.push(selectHtml({ id: "selOccupation", label: "직종 선택", options, value: selection.occupation }));
   }
   if (route === "industry") {
-    const options = uniqueSorted(store.vacancy.rows, "industry").map((v) => ({ value: v, label: v }));
+    const options = optionsFor(store.vacancy.rows, "industry", selection.sido).map((v) => ({ value: v, label: v }));
     selects.push(selectHtml({ id: "selIndustry", label: "산업 선택", options, value: selection.industry }));
   }
 
@@ -51,7 +43,21 @@ function renderSwitcher(route, store, selection) {
 // location.hash 만 쓰고, 렌더는 기존 hashchange 경로에 맡긴다. 여기서
 // 직접 render() 를 부르면 경로가 둘로 갈려 뒤따르는 화면들이 그 위에서
 // 흔들린다.
-function wireSwitcher(selection) {
+function wireSwitcher(selection, store) {
+  const sidoEl = document.getElementById("selSido");
+  sidoEl?.addEventListener("change", () => {
+    // R41 — 시도가 바뀌면 직종/산업 선택지가 통째로 달라진다.
+    // reconcileForSido(순수 함수, data.js)가 지금 선택이 새 목록에도
+    // 있으면 유지하고, 없으면 새 목록의 첫 값으로 떨어뜨린다.
+    const nextSido = sidoEl.value;
+    location.hash = selectionHash({
+      ...selection,
+      sido: nextSido,
+      occupation: reconcileForSido(store.vacancy.rows, selection, "occupation", nextSido),
+      industry: reconcileForSido(store.vacancy.rows, selection, "industry", nextSido),
+    });
+  });
+
   const bind = (id, field) => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -59,7 +65,6 @@ function wireSwitcher(selection) {
       location.hash = selectionHash({ ...selection, [field]: el.value });
     });
   };
-  bind("selSido", "sido");
   bind("selOccupation", "occupation");
   bind("selIndustry", "industry");
 }
@@ -98,7 +103,7 @@ async function main() {
     const module = await import(`./screens/${selection.route}.js`);
     document.getElementById("screen").innerHTML =
       renderSwitcher(selection.route, store, selection) + module.render(store, selection);
-    wireSwitcher(selection);
+    wireSwitcher(selection, store);
   };
 
   window.addEventListener("hashchange", render);

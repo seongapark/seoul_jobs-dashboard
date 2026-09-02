@@ -138,3 +138,28 @@ export function hasValue(rows, selection) {
   return rows.some((row) =>
     Object.entries(selection).every(([key, want]) => row[key] === want));
 }
+
+// R41(리뷰 지적) — 스위처 선택지는 지역으로 걸러야 한다. 시군구 축 행에는
+// sido 필드가 없다(sigungu/center 뿐) — 시군구 코드가 행정표준코드라 앞
+// 두 자리가 시도다(서울 "11"·경기 "41"·인천 "28"). 안 거르면 데이터가
+// 하나도 없는 (시도,직종) 조합을 고를 수 있고, 그러면 hasValue 가 카드를
+// 전부 감춰 화면이 통째로 빈다 — 사용자 눈엔 "앱이 고장났다"와 구별 안 된다.
+// 빈 문자열은 뺀다(est 의 "전직종 합계" 행이 occupation:"" 을 쓴다).
+export function optionsFor(rows, field, sido) {
+  const values = new Set();
+  for (const row of rows) {
+    if (row.sigungu && row.sigungu.startsWith(sido) && row[field]) values.add(row[field]);
+  }
+  return [...values].sort((a, b) => a.localeCompare(b, "ko"));
+}
+
+// 시도를 바꾸면 optionsFor 의 목록이 통째로 달라진다. 지금 선택이 새
+// 목록에도 있으면 그대로 두고, 없으면(다른 시도에만 있던 값) 조용히 빈
+// 화면이 되는 대신 새 목록의 첫 값으로 떨어뜨린다(목록이 비어 있으면
+// undefined — parseSelection 이 기대하는 "없음"과 같은 모양). selection
+// 에 그 field 가 애초에 없으면(이 라우트에 그 축이 없음) 손대지 않는다.
+export function reconcileForSido(rows, selection, field, nextSido) {
+  if (selection[field] == null) return selection[field];
+  const options = optionsFor(rows, field, nextSido);
+  return options.includes(selection[field]) ? selection[field] : options[0];
+}

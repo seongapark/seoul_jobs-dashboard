@@ -1,6 +1,10 @@
 // app/tests/selection.test.js — parseSelection/selectionHash (R29/R30) 과
 // Step 6b(data-nav) 가 기대는 왕복을, DOM 없이 문자열 수준에서 검증한다.
-import { parseSelection, selectionHash } from "../js/data.js";
+// optionsFor/reconcileForSido(R41)는 app.js 의 스위처가 쓰는 순수 로직이다
+// — app.js 는 top-level 에서 main()이 곧장 돌며 document/fetch 를 찾으므로
+// 노드에서 직접 import 해 테스트할 수 없다. 그래서 이 로직은 data.js 에
+// 두고(순수 함수), app.js 는 그것을 불러 쓰기만 한다.
+import { parseSelection, selectionHash, optionsFor, reconcileForSido } from "../js/data.js";
 
 let failed = 0;
 const eq = (got, want, label) => {
@@ -52,5 +56,28 @@ const roundTripped = parseSelection(navValue);
 eq(roundTripped.route, "center", "data-nav 문자열이 route 를 왕복시킨다");
 eq(roundTripped.scope, "서울", "data-nav 문자열이 scope 를 왕복시킨다");
 eq(roundTripped.sigungu, "11110", "data-nav 문자열이 sigungu 를 왕복시킨다");
+
+// --- optionsFor/reconcileForSido (R41 — 스위처 선택지는 지역으로 걸러야 한다) ---
+const vacancyRows = [
+  { sigungu: "11110", occupation: "경영·행정·사무직", industry: "제조업" },
+  { sigungu: "11140", occupation: "생산직", industry: "건설업" },
+  { sigungu: "41111", occupation: "판매직", industry: "도소매업" },
+  { sigungu: "41135", occupation: "", industry: "" }, // 빈 문자열은 est 전직종 합계 값 — 선택지에서 뺀다
+];
+
+eq(optionsFor(vacancyRows, "occupation", "11"), ["경영·행정·사무직", "생산직"],
+   "서울(11)로 거르면 서울 시군구 행의 occupation 만, 가나다순");
+eq(optionsFor(vacancyRows, "occupation", "41"), ["판매직"], "경기(41)로 거르면 경기 행만 남는다");
+eq(optionsFor(vacancyRows, "industry", "41"), ["도소매업"], "industry 축도 같은 방식으로 거른다");
+eq(optionsFor(vacancyRows, "occupation", "28"), [], "행이 없는 시도는 빈 목록(에러 없이)");
+
+eq(reconcileForSido(vacancyRows, { occupation: "생산직" }, "occupation", "11"), "생산직",
+   "새 시도 목록에도 있으면 선택을 그대로 유지한다");
+eq(reconcileForSido(vacancyRows, { occupation: "생산직" }, "occupation", "41"), "판매직",
+   "새 시도 목록에 없으면 새 목록의 첫 값으로 떨어진다(조용히 빈 화면이 되지 않는다)");
+eq(reconcileForSido(vacancyRows, { occupation: "생산직" }, "occupation", "28"), undefined,
+   "새 목록이 아예 비어 있으면 undefined 로 떨어진다");
+eq(reconcileForSido(vacancyRows, {}, "occupation", "41"), undefined,
+   "이 라우트에 애초에 occupation 선택이 없으면 손대지 않는다");
 
 process.exit(failed ? 1 : 0);
