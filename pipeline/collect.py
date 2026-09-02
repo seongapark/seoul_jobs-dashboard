@@ -138,6 +138,31 @@ def run_monthly(period, *, out_dir, fetchers, cm, previous=None):
     return {name: len(fetched.rows) for name, fetched in collected.items()}
 
 
+def run_series(*, out_dir, fetchers):
+    """마감년월 축 시계열(Task 9b, R19/R27)을 모아 쓴다.
+
+    run_monthly 와 같은 원칙 — 검사를 다 통과한 뒤에야 파일을 쓴다. 단
+    fetcher 계약이 다르다: 시계열은 총계 검산이 필요 없으므로(월별 합산
+    자체가 R19 위반이다) `Fetched` 로 감싸지 않고 `() -> list[dict]` 를
+    그대로 받는다 — period 인자도 없다(기본 레이아웃을 그대로 받아 여러
+    달을 한 번에 백필하므로 "이번 달"이라는 개념이 없다).
+    """
+    collected: dict[str, list[dict]] = {name: fetch() for name, fetch in fetchers.items()}
+
+    for rows in collected.values():
+        checks.check_series_shape(rows)
+        checks.check_series_months(rows)
+
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    for name, rows in collected.items():
+        (out_dir / f"{name}.json").write_text(
+            json.dumps({"rows": rows, "collected_at": stamp}, ensure_ascii=False),
+            encoding="utf-8")
+    return {name: len(rows) for name, rows in collected.items()}
+
+
 def run_halfyear(period, *, out_dir, api_key, collector=None):
     from pipeline import est
 

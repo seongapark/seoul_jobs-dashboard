@@ -5,6 +5,8 @@
 """
 from __future__ import annotations
 
+import re
+
 INCHEON_OLD_TO_NEW = {
     "28110": ["28125", "28155"],   # 중구 → 제물포·영종
     "28140": ["28125"],            # 동구 → 제물포
@@ -88,3 +90,41 @@ def check_against_total(rows, total, *, field, mode) -> None:
                 f"{field}: 시군구 합({parts}) 이 총계({expected}) 보다 작다 — 행이 빠졌다")
     else:
         raise ValueError(f"알 수 없는 mode: {mode!r}")
+
+
+# ---------------------------------------------------------------------------
+# Task 9b (R19/R27) — 마감년월 축 시계열 전용 검사.
+#
+# 시계열은 선으로 잇는 용도이지 더하는 용도가 아니다(R19). 그리드가 기간
+# 축에 끼워 넣는 요약 행(예: "합계")이 그대로 섞이면 화면이 그것을 한 달인
+# 양 선으로 이어 버린다 — check_series_shape 의 period 6자리 검사가 그것을
+# 기계로 막는 자리다.
+# ---------------------------------------------------------------------------
+
+_PERIOD_RE = re.compile(r"^\d{6}$")
+
+
+def check_series_shape(rows) -> None:
+    """(sido, period) 조합이 유일하고, period 가 전부 YYYYMM 6자리인지 본다."""
+    seen: set[tuple] = set()
+    for row in rows:
+        period = row.get("period")
+        if not (isinstance(period, str) and _PERIOD_RE.match(period)):
+            raise CheckFailed(
+                f"period 가 YYYYMM 6자리 숫자가 아니다: {period!r} — "
+                f"그리드가 끼워 넣은 요약 행(예: '합계')일 수 있다")
+        key = (row.get("sido"), period)
+        if key in seen:
+            raise CheckFailed(f"(sido, period) 조합이 중복이다: {key}")
+        seen.add(key)
+
+
+def check_series_months(rows, minimum: int = 2) -> None:
+    """어느 시도든 관측 월이 minimum 개 미만이면 실패한다."""
+    by_sido: dict[str, set[str]] = {}
+    for row in rows:
+        by_sido.setdefault(row["sido"], set()).add(row["period"])
+    for sido, periods in by_sido.items():
+        if len(periods) < minimum:
+            raise CheckFailed(
+                f"{sido}: 관측 월이 {len(periods)}개뿐이다 (최소 {minimum}개 필요)")

@@ -74,14 +74,14 @@ class UnknownRegion(ValueError):
     """
 
 
-def _period(text: str) -> str:
+def period_code(text: str) -> str:
     found = re.search(r"(\d{4})년\s*(\d{2})월", text or "")
     if not found:
         raise ValueError(f"기간을 못 읽는다: {text!r}")
     return found.group(1) + found.group(2)
 
 
-def _number(text) -> int:
+def to_number(text) -> int:
     text = (text or "").strip().replace(",", "")
     return 0 if text in ("", "-") else int(float(text))
 
@@ -110,13 +110,13 @@ def collect_vacancy(rows, cm) -> list[dict]:
     for row in rows:
         code = _code(row["(근무지역)시군구"])
         out.append({
-            "period": _period(row["마감년월"]),
+            "period": period_code(row["마감년월"]),
             "sigungu": code,
             "center": cm.center_of(code),
             "occupation": _strip_prefix(row.get("직종_중분류", "")),
             "industry": (row.get("산업_대분류") or "").strip(),
-            "vacancy": _number(row.get("유효구인인원(전체)")),
-            "seekers": _number(_first(row, _SEEKERS_KEYS)),
+            "vacancy": to_number(row.get("유효구인인원(전체)")),
+            "seekers": to_number(_first(row, _SEEKERS_KEYS)),
         })
     return out
 
@@ -127,11 +127,11 @@ def collect_placement(rows, cm) -> list[dict]:
     for row in rows:
         code = _code(row["(근무지역)시군구"])
         out.append({
-            "period": _period(row["마감년월"]),
+            "period": period_code(row["마감년월"]),
             "sigungu": code,
             "center": cm.center_of(code),
             "occupation": _strip_prefix(row.get("직종_중분류", "")),
-            "placements": _number(row.get("취업건수(월)")),
+            "placements": to_number(row.get("취업건수(월)")),
         })
     return out
 
@@ -142,14 +142,14 @@ def collect_insured(rows, cm) -> list[dict]:
     for row in rows:
         code = _code(row["(사업장)시군구"])
         out.append({
-            "period": _period(row["마감년월"]),
+            "period": period_code(row["마감년월"]),
             "sigungu": code,
             "center": cm.center_of(code),
             "occupation": _strip_prefix(row.get("직종_중분류", "")),
             "industry": (row.get("산업_대분류") or "").strip(),
-            "insured": _number(row.get("피보험자수(전체)")),
-            "gained": _number(row.get("취득자수(월)")),
-            "lost": _number(row.get("상실자수(월)")),
+            "insured": to_number(row.get("피보험자수(전체)")),
+            "gained": to_number(row.get("취득자수(월)")),
+            "lost": to_number(row.get("상실자수(월)")),
         })
     return out
 
@@ -157,11 +157,11 @@ def collect_insured(rows, cm) -> list[dict]:
 def collect_mobility(rows) -> list[dict]:
     """시도 축 경력직 이동 행을 화면용 행으로 편다 (센터 매핑이 필요 없다)."""
     return [{
-        "period": _period(row["마감년월"]),
+        "period": period_code(row["마감년월"]),
         "sido": (row.get("(사업장)시도") or "").strip(),
         "industry": (row.get("산업_대분류") or "").strip(),
         "prev_industry": (row.get("산업(이전)_대분류") or "").strip(),
-        "movers": _number(row.get("경력이동자수(월)")),
+        "movers": to_number(row.get("경력이동자수(월)")),
     } for row in rows]
 
 
@@ -185,7 +185,7 @@ _SIDO_NAME_TO_CODE = {
 }
 
 
-def _sido_code(name: str) -> str:
+def sido_code(name: str) -> str:
     try:
         return _SIDO_NAME_TO_CODE[(name or "").strip()]
     except KeyError:
@@ -197,10 +197,10 @@ def collect_vacancy_sido(rows) -> list[dict]:
     out = []
     for row in rows:
         out.append({
-            "period": _period(row["마감년월"]),
-            "sido": _sido_code(row.get("(지역별)시도") or row.get("지역")),
-            "vacancy": _number(row.get("유효구인인원(전체)")),
-            "seekers": _number(_first(row, _SEEKERS_KEYS)),
+            "period": period_code(row["마감년월"]),
+            "sido": sido_code(row.get("(지역별)시도") or row.get("지역")),
+            "vacancy": to_number(row.get("유효구인인원(전체)")),
+            "seekers": to_number(_first(row, _SEEKERS_KEYS)),
         })
     return out
 
@@ -210,9 +210,9 @@ def collect_placement_sido(rows) -> list[dict]:
     out = []
     for row in rows:
         out.append({
-            "period": _period(row["마감년월"]),
-            "sido": _sido_code(row.get("(지역별)시도") or row.get("지역")),
-            "placements": _number(row.get("취업건수(월)")),
+            "period": period_code(row["마감년월"]),
+            "sido": sido_code(row.get("(지역별)시도") or row.get("지역")),
+            "placements": to_number(row.get("취업건수(월)")),
         })
     return out
 
@@ -222,10 +222,10 @@ def collect_insured_sido(rows) -> list[dict]:
     out = []
     for row in rows:
         out.append({
-            "period": _period(row["마감년월"]),
-            "sido": _sido_code(row.get("(사업장)시도") or row.get("지역")),
-            "insured": _number(row.get("피보험자수(전체)")),
-            "gained": _number(row.get("취득자수(월)")),
-            "lost": _number(row.get("상실자수(월)")),
+            "period": period_code(row["마감년월"]),
+            "sido": sido_code(row.get("(사업장)시도") or row.get("지역")),
+            "insured": to_number(row.get("피보험자수(전체)")),
+            "gained": to_number(row.get("취득자수(월)")),
+            "lost": to_number(row.get("상실자수(월)")),
         })
     return out
