@@ -312,6 +312,15 @@ def _reparent_general_districts(rows: list[dict], spec: Spec) -> list[dict]:
     known = eis.SIGUNGU_NAME_TO_CODE
     out = []
     for row in rows:
+        # 그룹 소계 행("경기도 수원시 권선구 전체")은 손대지 않는다 — _split_metro 가
+        # 뒤에서 버린다. 실측으로 걸린 두 가지 때문에 여기서 반드시 먼저 걸러야 한다:
+        #   - "경기도 수원시 권선구 전체" 는 모시 후보가 "경기도 수원시 권선구" 가 돼
+        #     아래 예외를 때린다(=수집이 통째로 죽는다).
+        #   - 더 나쁜 것: "서울특별시 종로구 전체" 는 앞부분이 실제 시군구
+        #     ("서울특별시 종로구")라 **조용히 종로구로 합쳐져 이중계상**된다.
+        if _is_subtotal(row, spec):
+            out.append(row)
+            continue
         name = (row.get(spec.region) or "").strip()
         parts = name.split(" ")
         if name in known or len(parts) < 3 or _sido_of_name(name) is None:

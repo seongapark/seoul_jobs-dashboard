@@ -413,3 +413,29 @@ def test_sido_datasets_have_no_residual_concept(recorded_layout):
           "2026년 07월_유효구직자수(전체)": "1"}], []))
     built = fetchers.monthly_fetchers(browser=object(), cm=_CM(), get=_fake_get(), fetch=grid)
     assert built["vacancy_sido"]("202607").residuals is None
+
+
+def test_group_subtotal_rows_are_not_reparented(recorded_layout):
+    """실측으로 걸린 버그 — 소계 행이 일반구 이관에 먼저 닿으면 안 된다.
+
+    '경기도 수원시 권선구 전체' 는 모시 후보가 '경기도 수원시 권선구' 가 돼
+    예외를 때렸고(수집이 통째로 죽는다), 더 나쁜 '서울특별시 종로구 전체' 는
+    앞부분이 실제 시군구라 조용히 종로구로 합쳐져 이중계상됐을 것이다."""
+    grid = _gyeonggi_grid()
+    label = "2026년 07월"
+    for name in ("경기도 수원시 권선구 전체", "서울특별시 종로구 전체"):
+        grid.rows.append({"(근무지역)시군구": name, "직종_중분류": name,
+                          f"{label}_유효구인인원(전체)": "9,999",
+                          f"{label}_유효구직자수(전체)": "9,999"})
+    grid.rows.append({"(근무지역)시군구": "서울특별시 종로구",
+                      "직종_중분류": "2025직종_경영·행정·사무직",
+                      f"{label}_유효구인인원(전체)": "6",
+                      f"{label}_유효구직자수(전체)": "95"})
+    built = fetchers.monthly_fetchers(browser=object(), cm=_CM(), get=_fake_get(),
+                                      fetch=_FakeGrid(result=grid))
+
+    rows = built["vacancy"]("202607").rows
+    by_code = {r["sigungu"]: r for r in rows}
+
+    assert by_code["11110"]["vacancy"] == 6       # 소계 9,999 가 섞이지 않았다
+    assert by_code["41110"]["vacancy"] == 800     # 권선구 소계도 안 섞였다
