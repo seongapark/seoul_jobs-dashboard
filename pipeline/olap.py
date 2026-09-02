@@ -148,10 +148,119 @@ class OlapPageWalkError(OlapPaginationError):
 # 페이지 이동 사이 짧은 대기 (정중함) — 스크롤 폴링 대기(200ms)와 같은 자릿수.
 _PAGE_ADVANCE_WAIT_MS = 400
 
+# R47 실측(2026-09-02) — 무거운 그리드(시군구 × 직종)는 페이지 버튼을 눌러도
+# **0.4초 뒤에는 이전 페이지가 그대로 남아 있고 3.4초쯤에야 갱신된다.** 고정
+# 400ms 대기 뒤에 읽으면 이전 페이지를 새 페이지로 착각한다 — 실제로 그래서
+# 12페이지에서 "렌더된 행이 이전 페이지와 똑같다"로 죽었다. 시간에 기대는
+# 대신 **본문이 실제로 바뀔 때까지 폴링**한다. 끝내 안 바뀌면 호출부가 예외를
+# 낸다(그 판정은 그대로 둔다 — 조용히 같은 페이지를 두 번 담지 않는다).
+_PAGE_RENDER_POLL_MS = 400
+_PAGE_RENDER_MAX_POLLS = 40      # 최대 16초
 
-def _click_page(page, page_number: int) -> None:
-    """`.dx-datagrid-pager` 안 1-based page_number 번째 페이지 버튼을 클릭한다."""
-    page.locator(_PAGER_SELECTOR).nth(page_number - 1).click()
+# ---------------------------------------------------------------------------
+# R47 (Task 15a 실측, 2026-09-02) — 페이저는 "전체 페이지 목록"이 아니라 **창**이다.
+#
+# 관측한 페이저 텍스트: '12345678910다음'. 숫자 버튼은 최대 10개까지만 보이고,
+# 그보다 페이지가 많으면 끝에 "다음" 버튼이 붙는다. `.dx-page` 는 그 "다음"까지
+# 세므로 `.dx-page` 개수(=11)를 전체 페이지 수로 믿으면 **예외 없이 잘린
+# 그리드**가 나간다(실측: 시군구 70개 중 14개만 수집하고 성공한 척했다).
+# 그래서 이제 창을 넘겨가며 끝까지 걷는다.
+# ---------------------------------------------------------------------------
+_PAGER_NEXT_LABEL = "다음"
+# 걷는 데 직접 쓰지는 않지만 "모르는 버튼"과 구별해야 하는 이동 버튼들.
+# "다음"만 실측으로 확인했고 나머지는 창 2 이후에 나타날 법한 이름이다 —
+# 모르는 버튼이 나오면 아래 `_check_pager_labels` 가 시끄럽게 실패한다.
+_PAGER_NAV_LABELS = frozenset({_PAGER_NEXT_LABEL, "이전", "처음", "마지막"})
+# 무한 루프 방지 상한. 실측 최대 워크로드(시군구 289 × 직종 36 ÷ 50행 ≈ 210페이지)
+# 보다 넉넉하다. 여기 닿으면 조용히 멈추지 않고 예외를 낸다.
+_MAX_PAGES = 1_000
+
+
+def _pager_labels(page) -> list[str]:
+    """페이저 버튼의 라벨을 DOM 순서 그대로 읽는다 (숫자들 + "다음" 등)."""
+    return [text.strip() for text in
+            page.eval_on_selector_all(_PAGER_SELECTOR, "els => els.map(e => e.innerText)")]
+
+
+def _check_pager_labels(labels) -> None:
+    """숫자도 아니고 알려진 이동 버튼도 아닌 라벨이 있으면 실패한다.
+
+    페이저 구조를 이해하지 못한 채 걸으면 잘린 그리드가 조용히 나간다 —
+    이 모듈의 원칙대로 그러느니 시끄럽게 실패한다.
+    """
+    unknown = [text for text in labels
+               if not text.isdigit() and text not in _PAGER_NAV_LABELS]
+    if unknown:
+        raise OlapPaginationError(
+            f"페이저에 모르는 버튼({unknown})이 있다 — 페이저 구조가 바뀌었을 수 있다. "
+            f"아는 것은 숫자 버튼과 {sorted(_PAGER_NAV_LABELS)} 뿐이다.")
+
+
+def _click_pager_label(page, label: str) -> None:
+    labels = _pager_labels(page)
+    try:
+        index = labels.index(label)
+    except ValueError:
+        raise OlapPageWalkError(
+            f"페이저에서 '{label}' 버튼을 못 찾는다 (현재 버튼: {labels})") from None
+    page.locator(_PAGER_SELECTOR).nth(index).click()
+    page.wait_for_timeout(_PAGE_ADVANCE_WAIT_MS)
+
+
+def _labels_after_window_move(page, before: list[str]) -> list[str]:
+    """"다음"을 누른 뒤 페이저 라벨이 실제로 바뀔 때까지 기다렸다가 돌려준다.
+
+    본문 렌더가 늦는 것(_body_after_render)과 같은 이유로 라벨도 늦을 수 있다.
+    고정 대기 뒤에 읽으면 옛 창을 그대로 보고 "더 큰 번호가 없다 = 끝"이라고
+    **조용히 오판**한다 — 잘린 그리드가 예외 없이 나가는, 이 모듈이 가장
+    막고 싶은 실패다. 끝내 안 바뀌면 옛 라벨을 돌려주고, 진짜 끝인지 아닌지는
+    걷기가 끝난 뒤 `_check_walk_completeness` 가 페이지 크기로 교차검증한다.
+    """
+    labels = before
+    for _ in range(_PAGE_RENDER_MAX_POLLS):
+        labels = _pager_labels(page)
+        if labels != before:
+            return labels
+        page.wait_for_timeout(_PAGE_RENDER_POLL_MS)
+    return labels
+
+
+def _check_walk_completeness(page_sizes: list[int], visited: int) -> None:
+    """걷기를 멈춘 지점이 정말 마지막 페이지인지 시간과 무관하게 교차검증한다.
+
+    마지막 페이지는 보통 꽉 차지 않는다. 마지막으로 읽은 페이지가 정확히
+    `_PAGE_SIZE` 행이면 뒤에 페이지가 더 있는데 멈췄을 가능성이 훨씬 크다 —
+    (페이저 창을 못 넘겼거나 라벨을 늦게 읽었거나) 그 경우 조용히 잘린 결과를
+    반환하는 대신 실패한다. `fetch_grid` 의 "본문이 정확히 50행 배수면 페이저
+    탐지 실패로 본다"는 교차검증과 같은 논법이다.
+    """
+    if page_sizes and page_sizes[-1] == _PAGE_SIZE:
+        raise OlapPageWalkError(
+            f"{visited}페이지에서 걷기를 멈췄는데 그 페이지가 정확히 {_PAGE_SIZE}행으로 "
+            f"꽉 차 있다 — 마지막 페이지라면 보통 덜 찬다. 페이저 창을 못 넘겼을 "
+            f"가능성이 크다(총 {len(page_sizes)}페이지 읽음). 잘렸을 수 있는 "
+            "그리드를 반환하지 않는다.")
+
+
+def _next_page_number(labels, visited: int):
+    """창 안에서 아직 안 걸은 가장 작은 페이지 번호. 없으면 None."""
+    larger = [int(text) for text in labels if text.isdigit() and int(text) > visited]
+    return min(larger) if larger else None
+
+
+def _body_after_render(page, prev_body):
+    """페이지 클릭 뒤 본문이 실제로 바뀔 때까지 기다렸다가 돌려준다.
+
+    끝내 안 바뀌면 prev_body 를 그대로 돌려준다 — 호출부가 "페이지가 안
+    넘어갔다"로 보고 예외를 낸다.
+    """
+    body = prev_body
+    for _ in range(_PAGE_RENDER_MAX_POLLS):
+        page.wait_for_timeout(_PAGE_RENDER_POLL_MS)
+        _, *body = page.evaluate(_EXTRACT_JS)
+        if body and body != prev_body:
+            return body
+    return body
 
 
 # 실측(2026-09-02, tools/probe_pagination_dedup_evidence.py)으로 확인된 EIS
@@ -263,13 +372,33 @@ def _walk_paginated_grid(
 
     prev_body = first_body
     page_sizes = [len(first_body)]
+    visited = 1
 
-    for page_number in range(2, pager_count + 1):
-        _click_page(page, page_number)
-        page.wait_for_timeout(_PAGE_ADVANCE_WAIT_MS)
+    # R47 — 창을 넘겨가며 끝까지 걷는다. **종료 조건**은 하나다:
+    # "지금 창에도, '다음'을 눌러 새로 드러난 창에도, 마지막으로 걸은 페이지보다
+    # 큰 번호가 없다." 번호로만 이동하고 '다음'은 더 큰 번호를 **드러내는**
+    # 용도로만 쓰므로, '다음'이 페이지를 한 칸 넘기든 창을 통째로 넘기든
+    # 결과가 같다(둘 중 무엇인지는 실측하지 않았고, 알 필요가 없게 만든 것이다).
+    # 'visited' 가 매 반복마다 반드시 커지므로 루프는 끝난다 — 그래도 페이저가
+    # 이상하게 굴 때를 대비해 _MAX_PAGES 상한에서 예외를 낸다.
+    while True:
+        labels = _pager_labels(page)
+        _check_pager_labels(labels)
+        page_number = _next_page_number(labels, visited)
+        if page_number is None and _PAGER_NEXT_LABEL in labels:
+            _click_pager_label(page, _PAGER_NEXT_LABEL)
+            labels = _labels_after_window_move(page, labels)
+            _check_pager_labels(labels)
+            page_number = _next_page_number(labels, visited)
+        if page_number is None:
+            break
+        if len(page_sizes) >= _MAX_PAGES:
+            raise OlapPageWalkError(
+                f"페이지를 {_MAX_PAGES}개까지 걸었는데도 끝이 안 난다 — 페이저가 "
+                "제자리를 도는 것으로 보고 잘렸을 수 있는 결과를 반환하지 않는다.")
 
-        grid = page.evaluate(_EXTRACT_JS)
-        _, *body = grid
+        _click_pager_label(page, str(page_number))
+        body = _body_after_render(page, prev_body)
 
         if not body:
             raise OlapExtractionError(
@@ -280,7 +409,7 @@ def _walk_paginated_grid(
         if body == prev_body:
             raise OlapPageWalkError(
                 f"{page_number}페이지로 이동을 시도했지만 렌더된 행이 이전 "
-                f"페이지와 똑같다 (총 {pager_count}페이지 중) — "
+                f"페이지와 똑같다 — "
                 f"{_PAGER_SELECTOR} 클릭이 페이지를 못 넘겼을 수 있다."
             )
 
@@ -300,6 +429,9 @@ def _walk_paginated_grid(
 
         page_sizes.append(len(body))
         prev_body = body
+        visited = page_number
+
+    _check_walk_completeness(page_sizes, visited)
 
     for i, size in enumerate(page_sizes[:-1], start=1):
         if size != _PAGE_SIZE:
@@ -486,25 +618,13 @@ def fetch_grid(url: str, *, page, max_scrolls: int = 200, after_load=None) -> Gr
 
     pager_count = page.locator(_PAGER_SELECTOR).count()
 
-    # Task 15a 실측(2026-09-02) — 페이저의 숫자 버튼은 **최대 10개짜리 창**이고,
-    # 그보다 페이지가 많으면 끝에 "다음" 버튼이 붙는다(관측한 페이저 텍스트:
-    # '12345678910다음', `.dx-page` 는 그 "다음"까지 세어 11). 즉 pager_count 는
-    # 전체 페이지 수가 아니다. 이 사실을 모르는 채 `_walk_paginated_grid` 가
-    # 숫자 버튼만 걷으면 **예외 없이 잘린 그리드**를 돌려준다(실측: (근무지역)
-    # 시군구 × 직종_중분류 그리드에서 시군구 70개 중 14개만 수집됨). 이 모듈의
-    # 원칙대로, 창 너머 페이지가 있다는 증거가 보이면 조용히 잘린 결과를
-    # 반환하는 대신 시끄럽게 실패한다. (창을 넘겨가며 걷는 로직 자체는 아직
-    # 없다 — 후속 과제.)
+    # R47 — 페이저를 걷기 전에 **구조를 아는지** 먼저 확인한다. `.dx-page` 는
+    # 숫자 버튼 창 + "다음" 을 함께 세므로 그 개수는 전체 페이지 수가 아니다
+    # (실측 텍스트 '12345678910다음'). 창 넘기기 자체는 _walk_paginated_grid 가
+    # 하고, 여기서는 모르는 버튼이 섞여 있을 때 — 즉 페이저 구조가 바뀌어
+    # 걷기가 조용히 잘릴 수 있을 때 — 시끄럽게 실패한다.
     if pager_count > 1:
-        labels = [text.strip() for text in
-                  page.eval_on_selector_all(_PAGER_SELECTOR, "els => els.map(e => e.innerText)")]
-        windowed = [text for text in labels if not text.isdigit()]
-        if windowed:
-            raise OlapPaginationError(
-                f"페이저에 숫자가 아닌 버튼({windowed})이 있다 — 숫자 버튼"
-                f"({[t for t in labels if t.isdigit()]})은 전체가 아니라 창일 뿐이고, "
-                "그것만 걸으면 잘린 그리드가 조용히 나간다. 페이저 창 넘기기가 "
-                "구현되기 전까지는 여기서 실패한다.")
+        _check_pager_labels(_pager_labels(page))
 
     grid = page.evaluate(_EXTRACT_JS)
     header, *body = grid

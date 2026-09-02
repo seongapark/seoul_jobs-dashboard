@@ -228,7 +228,9 @@ def test_fetch_grid_raises_when_page_click_does_not_change_rendered_rows():
         olap.fetch_grid("http://fake", page=page, max_scrolls=10)
 
     msg = str(exc_info.value)
-    assert "6" in msg
+    # R47 이후로는 총 페이지 수를 미리 알 수 없다(페이저는 창일 뿐이다) — 메시지가
+    # 짚어야 하는 것은 "몇 페이지짜리인가"가 아니라 "어느 페이지에서 막혔는가"다.
+    assert "2페이지" in msg
     assert page.scroll_calls == 0  # 스크롤 폴백으로 새지 않는다
 
 
@@ -315,7 +317,8 @@ def test_fetch_grid_raises_when_a_duplicated_row_has_an_unknown_label():
     화이트리스트이지, 모르면 통과시키는 블랙리스트가 아니다."""
     dup_row = ["???", "1", "2"]
     page1 = [dup_row] + [[f"row{i}", str(i)] for i in range(49)]
-    page2 = [dup_row] + [[f"row{i}", str(i)] for i in range(49, 98)]
+    # 마지막 페이지는 덜 찬다 (꽉 찬 마지막 페이지는 R47 완전성 검사가 따로 잡는다)
+    page2 = [dup_row] + [[f"row{i}", str(i)] for i in range(49, 89)]
     page = _FakePage(windows=[page1, page2], pager_count=2)
 
     with pytest.raises(olap.OlapPageWalkError) as exc_info:
@@ -472,7 +475,7 @@ def test_fetch_and_parse_grid_round_trips_header_rows_and_summaries():
     데이터 계약을 실제 이음매에서 확인)."""
     total_row = ["총계", "165,821", "1,550,154"]
     page1 = [total_row] + [[f"region{i}", str(i)] for i in range(49)]
-    page2 = [total_row] + [[f"region{i}", str(i)] for i in range(49, 98)]
+    page2 = [total_row] + [[f"region{i}", str(i)] for i in range(49, 89)]   # 마지막 페이지는 덜 찬다
     page = _FakePage(
         windows=[page1, page2],
         pager_count=2,
@@ -484,7 +487,7 @@ def test_fetch_and_parse_grid_round_trips_header_rows_and_summaries():
 
     assert isinstance(result, olap.ParsedGrid)
     assert all(isinstance(d, dict) for d in result.rows)
-    assert {d["(지역별)시군구"] for d in result.rows} == {f"region{i}" for i in range(98)}
+    assert {d["(지역별)시군구"] for d in result.rows} == {f"region{i}" for i in range(89)}
     assert "총계" not in {d["(지역별)시군구"] for d in result.rows}
     assert len(result.summaries) == 1
     assert result.summaries[0] == {
@@ -494,14 +497,257 @@ def test_fetch_and_parse_grid_round_trips_header_rows_and_summaries():
     }
 
 
-def test_fetch_grid_raises_when_the_pager_is_only_a_window():
-    """Task 15a 실측: 페이지가 10개를 넘으면 페이저는 '1…10 다음' 이라는 **창**만
-    보여주고 `.dx-page` 는 그 '다음'까지 세어 11을 준다. 숫자 버튼만 걷으면 예외
-    없이 잘린 그리드가 나간다(실측: 시군구 70개 중 14개만 수집) — 그러느니 실패한다."""
-    page = _FakePage(windows=[[["a", "1"]]], pager_count=11,
-                     pager_labels=[str(i) for i in range(1, 11)] + ["다음"])
+# ---------------------------------------------------------------------------
+# R47 — 페이저 창 넘기기 (Task 15a 실측: 숫자 버튼은 최대 10개짜리 창이고
+# 그 너머는 "다음" 버튼이다. 옛 코드는 `.dx-page` 개수를 전체 페이지 수로 믿어
+# 예외 없이 잘린 그리드를 반환했다 — 실측에서 시군구 70개 중 14개만 수집됐다.)
+# ---------------------------------------------------------------------------
+
+_WINDOW = 10
+
+
+class _FakePagedPage:
+    """실측된 창 페이저를 충실히 흉내낸다.
+
+    숫자 버튼은 현재 창(최대 10개)만 보이고, 뒤에 페이지가 더 있으면 끝에
+    "다음" 이 붙는다. "다음" 은 창을 통째로 넘긴다. 숫자 클릭은 그 페이지로
+    이동한다. (실제 EIS 의 "다음" 이 창을 넘기는지 한 칸만 넘기는지는 실측하지
+    않았고, olap 은 번호로만 이동하므로 어느 쪽이든 결과가 같아야 한다 —
+    그 성질을 _FakePagedNextAdvancesOnePage 가 따로 확인한다.)
+    """
+
+    def __init__(self, pages, header=None, extra_labels=(), render_delay_polls=0):
+        self.pages = pages
+        self._header = header or ["지역", "값"]
+        self._extra_labels = list(extra_labels)
+        self.current = 1
+        self.window_start = 1
+        self.scroll_calls = 0
+        self.clicked = []
+        # 실측: 무거운 그리드는 클릭 뒤 한참 이전 페이지를 그대로 보여준다.
+        self._render_delay_polls = render_delay_polls
+        self._displayed = 1
+        self._pending = 0
+
+    # --- 페이저 모델 -------------------------------------------------------
+    def _labels(self):
+        last = min(self.window_start + _WINDOW - 1, len(self.pages))
+        labels = [str(n) for n in range(self.window_start, last + 1)]
+        if last < len(self.pages):
+            labels.append("다음")
+        return labels + self._extra_labels
+
+    def _click_index(self, index):
+        label = self._labels()[index]
+        self.clicked.append(label)
+        if label.isdigit():
+            self.current = int(label)
+        elif label == "다음":
+            self._advance_window()
+        if self.current != self._displayed:
+            self._pending = self._render_delay_polls
+
+    def _advance_window(self):
+        self.window_start = min(self.window_start + _WINDOW,
+                                max(len(self.pages) - _WINDOW + 1, 1))
+
+    # --- Playwright page 인터페이스 중 fetch_grid 가 쓰는 것만 ---------------
+    def goto(self, *a, **k):
+        pass
+
+    def wait_for_selector(self, selector, **k):
+        pass
+
+    def wait_for_timeout(self, *a, **k):
+        pass
+
+    def close(self):
+        pass
+
+    def eval_on_selector_all(self, selector, js):
+        return self._labels()
+
+    def evaluate(self, js):
+        if self._pending > 0:
+            self._pending -= 1               # 아직 이전 페이지가 렌더돼 있다
+        else:
+            self._displayed = self.current
+        return [self._header, *self.pages[self._displayed - 1]]
+
+    def locator(self, selector):
+        return _FakePagedLocator(self)
+
+
+class _FakePagedNextAdvancesOnePage(_FakePagedPage):
+    """"다음"이 창이 아니라 페이지를 한 칸 넘기는 변형.
+
+    olap 이 번호로만 이동하므로 결과가 같아야 한다 — 그게 R47 종료 조건이
+    "다음"의 의미에 기대지 않는다는 것의 증거다.
+    """
+
+    def _advance_window(self):
+        self.current = min(self.current + 1, len(self.pages))
+        if self.current > self.window_start + _WINDOW - 1:
+            self.window_start += 1
+
+
+class _FakePagedLocator:
+    def __init__(self, page):
+        self._page = page
+
+    @property
+    def first(self):
+        return self
+
+    def nth(self, index):
+        self._index = index
+        return self
+
+    def click(self):
+        self._page._click_index(self._index)
+
+    def count(self):
+        return len(self._page._labels())
+
+    def evaluate(self, js):
+        self._page.scroll_calls += 1
+
+
+def _pages(count, header_row=None):
+    """마지막 페이지만 짧은, 페이지당 50행짜리 가짜 그리드."""
+    pages = []
+    number = 0
+    for index in range(count):
+        size = olap._PAGE_SIZE if index < count - 1 else 17
+        body = []
+        for _ in range(size):
+            body.append([f"region{number}", str(number)])
+            number += 1
+        pages.append(body)
+    return pages
+
+
+def test_fetch_grid_walks_past_the_ten_page_window():
+    """R47 핵심 — 창(10개) 너머 페이지까지 전부 걷는다.
+
+    옛 코드는 `.dx-page` 개수(=11, '다음' 포함)를 전체로 믿고 10페이지에서
+    멈춰 잘린 그리드를 조용히 반환했다."""
+    pages = _pages(23)
+    page = _FakePagedPage(pages)
+
+    grid = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+
+    expected = {row[0] for body in pages for row in body}
+    assert {row[0] for row in grid.rows} == expected
+    assert len(grid.rows) == 22 * olap._PAGE_SIZE + 17
+    assert page.clicked.count("다음") >= 2      # 창을 실제로 두 번 이상 넘겼다
+
+
+def test_window_walk_does_not_depend_on_what_next_button_means():
+    """'다음'이 창을 넘기든 페이지를 한 칸 넘기든 같은 결과여야 한다."""
+    pages = _pages(23)
+    page = _FakePagedNextAdvancesOnePage(pages)
+
+    grid = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+
+    assert {row[0] for row in grid.rows} == {row[0] for body in pages for row in body}
+
+
+def test_walk_stops_when_no_higher_page_number_appears():
+    """종료 조건 — 창에도, '다음'을 눌러 드러난 창에도 더 큰 번호가 없을 때 멈춘다."""
+    pages = _pages(10)                     # 정확히 창 하나 = '다음' 버튼이 없다
+    page = _FakePagedPage(pages)
+
+    grid = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+
+    assert len(grid.rows) == 9 * olap._PAGE_SIZE + 17
+    assert "다음" not in page.clicked
+
+
+def test_ten_pages_or_fewer_behave_exactly_as_before():
+    """회귀 — 창 안에 다 들어가는 페이저는 예전 그대로 걷는다."""
+    pages = _pages(6)
+    page = _FakePagedPage(pages)
+
+    grid = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+
+    assert len(grid.rows) == 5 * olap._PAGE_SIZE + 17
+    assert page.clicked == ["2", "3", "4", "5", "6"]
+
+
+def test_unknown_pager_button_still_fails_loudly():
+    """R47 가드는 유지된다 — 모르는 버튼이 생기면 걷지 않고 실패한다."""
+    page = _FakePagedPage(_pages(12), extra_labels=["맨끝으로"])
 
     with pytest.raises(olap.OlapPaginationError) as exc_info:
         olap.fetch_grid("http://fake", page=page, max_scrolls=10)
 
-    assert "다음" in str(exc_info.value)
+    assert "맨끝으로" in str(exc_info.value)
+
+
+def test_walk_waits_for_the_grid_to_actually_rerender():
+    """R47 실측(2026-09-02) — 무거운 그리드는 클릭 뒤 0.4초엔 이전 페이지가 그대로고
+    3.4초쯤 갱신된다. 고정 대기 뒤에 읽으면 이전 페이지를 새 페이지로 착각해
+    "행이 이전 페이지와 똑같다"로 죽는다(실제로 12페이지에서 그렇게 죽었다).
+    본문이 바뀔 때까지 폴링해야 한다."""
+    pages = _pages(14)
+    page = _FakePagedPage(pages, render_delay_polls=6)
+
+    grid = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+
+    assert {row[0] for row in grid.rows} == {row[0] for body in pages for row in body}
+
+
+def test_walk_still_fails_when_the_page_never_rerenders():
+    """폴링 예산을 다 써도 안 바뀌면 예외 — 같은 페이지를 두 번 담지 않는다."""
+    pages = _pages(12)
+    page = _FakePagedPage(pages, render_delay_polls=olap._PAGE_RENDER_MAX_POLLS + 5)
+
+    with pytest.raises(olap.OlapPageWalkError):
+        olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+
+
+def test_walk_that_stops_on_a_full_page_fails_instead_of_truncating():
+    """R47 가드 — 창을 못 넘겨 조용히 멈추는 일이 다시 생겨도 잘린 결과를 내지 않는다.
+
+    실측(2026-09-02): 창 넘김 뒤 라벨을 너무 일찍 읽으면 옛 창을 보고 "더 큰
+    번호가 없다 = 끝"이라고 오판해 서울(25개 구)까지만 걷고 성공한 척했다.
+    멈춘 지점이 꽉 찬 페이지면 마지막일 리 없다."""
+    class _StuckWindow(_FakePagedPage):
+        def _advance_window(self):
+            pass                    # "다음"이 먹지 않는다
+
+    page = _StuckWindow(_pages(14))
+
+    with pytest.raises(olap.OlapPageWalkError) as exc_info:
+        olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+
+    assert "꽉 차" in str(exc_info.value)
+
+
+def test_window_labels_that_arrive_late_are_waited_for():
+    """라벨이 늦게 갱신돼도 창을 제대로 넘긴다 (본문 렌더 지연과 같은 이유)."""
+    class _LateLabels(_FakePagedPage):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            self._lag = 0
+
+        def _advance_window(self):
+            super()._advance_window()
+            self._lag = 5           # 다섯 번은 옛 창 라벨을 그대로 보여준다
+
+        def _labels(self):
+            labels = super()._labels()
+            if self._lag > 0:
+                self._lag -= 1
+                start = max(self.window_start - _WINDOW, 1)
+                last = min(start + _WINDOW - 1, len(self.pages))
+                return [str(n) for n in range(start, last + 1)] + ["다음"]
+            return labels
+
+    pages = _pages(14)
+    page = _LateLabels(pages)
+
+    grid = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+
+    assert {row[0] for row in grid.rows} == {row[0] for body in pages for row in body}
