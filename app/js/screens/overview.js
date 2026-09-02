@@ -1,4 +1,4 @@
-import { card, pairCard, trend, num, RATIO_NOTE } from "../components.js";
+import { card, pairCard, trend, num, RATIO_NOTE, insuredBody } from "../components.js";
 import { ratio, hasValue, period, half, priorYearPeriod } from "../data.js";
 
 // 총괄 화면 — 스펙 §4.1. 시도 단위(R4)로 거른다: store.vacancySido/
@@ -69,33 +69,20 @@ export function render(store, selection = { sido: "11" }) {
   if (hasValue(store.insuredSido.rows, bySido)) {
     const ins = store.insuredSido.rows.find((r) => r.sido === selection.sido);
     if (ins.insured != null) {
-      const net = (ins.gained ?? 0) - (ins.lost ?? 0);
-      const netLabel = `${net > 0 ? "+" : ""}${num(net)}`;
-
       // 전년동월대비(R32) — 직종 축 시계열이 없어 이번 판은 시도 단위
       // 카드 4에만 붙인다. 같은 sido·12개월 전 같은 달 행이 있을 때만
       // 붙이고, 없으면 그 줄만 뺀다(전월대비는 요구에서 명시적으로 뺐다).
+      // 델타 계산·trio 마크업 자체는 components.insuredBody 가 한다 —
+      // 여기는 "이 축(시도)에서 1년 전 같은 달 행 찾기"만 담당한다.
       const priorPeriod = priorYearPeriod(store.insuredSido.period);
       const priorRow = store.insuredSeries?.rows?.find((r) =>
         r.sido === selection.sido && r.period === priorPeriod);
-      let deltaRow = "";
-      if (priorRow) {
-        const delta = ins.insured - priorRow.insured;
-        const cls = delta >= 0 ? "is-up" : "is-down";
-        const arrow = delta >= 0 ? "▲" : "▼";
-        deltaRow = `<div class="deltarow"><span class="card__delta ${cls}">${arrow} ${num(Math.abs(delta))}<small>전년동월대비</small></span></div>`;
-      }
 
       cards.push(card({
         title: '<span class="pin">4</span>고용보험 피보험자',
         badge: period(store.insuredSido.period),
-        body: `<div class="card__value num">${num(ins.insured)}<small>명</small></div>
-          ${deltaRow}
-          <dl class="trio">
-            <div><dt>취득</dt><dd class="num">${num(ins.gained)}</dd></div>
-            <div><dt>상실</dt><dd class="num">${num(ins.lost)}</dd></div>
-            <div><dt>순증</dt><dd class="num">${netLabel}</dd></div>
-          </dl>`,
+        body: insuredBody({ insured: ins.insured, gained: ins.gained, lost: ins.lost,
+                            priorInsured: priorRow?.insured }),
         notes: ["<b>사업장 소재지</b> 기준"],
       }));
     }

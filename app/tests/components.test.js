@@ -1,5 +1,5 @@
-// app/tests/components.test.js — esc / bars / collapseCard.
-import { esc, bars, collapseCard } from "../js/components.js";
+// app/tests/components.test.js — esc / bars / collapseCard / insuredBody.
+import { esc, bars, collapseCard, insuredBody } from "../js/components.js";
 
 let failed = 0;
 const eq = (got, want, label) => {
@@ -74,5 +74,25 @@ has(cc, "<p>내용</p>", "body 가 그대로 들어간다");
 // card() 와 같은 badgeClass 기본값
 const ccDefault = collapseCard({ title: "제목", badge: "26.07", body: "x" });
 has(ccDefault, "badge--jo", "badgeClass 기본값은 badge--jo");
+
+// --- insuredBody (총괄 카드4 · 직종별 카드8 · 산업별 카드11 공용) --------
+// 값 + 취득·상실·순증(순증 = 취득 − 상실). priorInsured 가 없으면
+// 전년동월대비 줄이 아예 빠지고, 있으면 부호에 따라 is-up/is-down.
+const ibBase = insuredBody({ insured: 800, gained: 60, lost: 25, priorInsured: undefined });
+has(ibBase, '<div class="card__value num">800<small>명</small></div>', "피보험자 값이 붙는다");
+has(ibBase, "취득", "취득 라벨");
+has(ibBase, "60", "취득 값");
+has(ibBase, "상실", "상실 라벨");
+has(ibBase, "25", "상실 값");
+has(ibBase, "+35", "순증 = 취득 − 상실, 양수면 + 부호");
+hasNot(ibBase, "card__delta", "priorInsured 가 없으면 전년동월대비 줄이 안 붙는다");
+
+const ibUp = insuredBody({ insured: 800, gained: 10, lost: 10, priorInsured: 700 });
+has(ibUp, "card__delta", "priorInsured 가 있으면 전년동월대비 줄이 붙는다");
+has(ibUp, "is-up", "늘었으면 is-up");
+has(ibUp, "100", "증감 절댓값(800-700)");
+
+const ibDown = insuredBody({ insured: 700, gained: 0, lost: 0, priorInsured: 800 });
+has(ibDown, "is-down", "줄었으면 is-down");
 
 process.exit(failed ? 1 : 0);

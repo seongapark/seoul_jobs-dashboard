@@ -1,4 +1,4 @@
-import { card, pairCard, bars, collapseCard, esc, num, RATIO_NOTE } from "../components.js";
+import { card, pairCard, bars, collapseCard, esc, num, RATIO_NOTE, insuredBody } from "../components.js";
 import { ratio, hasValue, titleFor, period, half } from "../data.js";
 
 // 직종별 화면 — 컨트롤러가 다시 쓴 브리프(task-12-brief.md) §전체가 유일한
@@ -106,36 +106,24 @@ export function render(store, selection) {
     const insuredSum = sumBy(occInsured, "insured");
     const gainedSum = sumBy(occInsured, "gained");
     const lostSum = sumBy(occInsured, "lost");
-    const net = gainedSum - lostSum;
-    const netLabel = `${net > 0 ? "+" : ""}${num(net)}`;
 
     // 전년동월대비(R32) — store.insuredSeries 는 지금 sido 단위까지만
     // 쌓이고 occupation 축이 없다(store shape 주석 참고). 그래서 아래
     // find 는 occupation 까지 함께 요구해 두되, 지금 수집되는 행에는 그
     // 필드가 없어 실제로는 항상 못 찾는다 — 조용히 줄이 빠질 뿐 카드는
     // 죽지 않는다. 나중에 직종 축 시계열이 생기면 이 화면을 고치지 않고
-    // 그대로 살아나도록 미리 배선해 둔 것이다.
+    // 그대로 살아나도록 미리 배선해 둔 것이다. 델타 계산·trio 마크업
+    // 자체는 components.insuredBody 가 한다(overview 카드4와 공유) —
+    // 여기는 "이 축(직종)에서 1년 전 같은 달 행 찾기"만 담당한다.
     const priorRow = store.insuredSeries?.rows?.find((r) =>
       r.sido === selection.sido && r.occupation === name);
-    let deltaRow = "";
-    if (priorRow) {
-      const delta = insuredSum - priorRow.insured;
-      const cls = delta >= 0 ? "is-up" : "is-down";
-      const arrow = delta >= 0 ? "▲" : "▼";
-      deltaRow = `<div class="deltarow"><span class="card__delta ${cls}">${arrow} ${num(Math.abs(delta))}<small>전년동월대비</small></span></div>`;
-    }
 
     cards.push(card({
       title: `<span class="pin">8</span>${esc(titleFor(name, "피보험자"))}`,
       badge: period(store.insured.period),
       badgeClass: "badge--jh",
-      body: `<div class="card__value num">${num(insuredSum)}<small>명</small></div>
-        ${deltaRow}
-        <dl class="trio">
-          <div><dt>취득</dt><dd class="num">${num(gainedSum)}</dd></div>
-          <div><dt>상실</dt><dd class="num">${num(lostSum)}</dd></div>
-          <div><dt>순증</dt><dd class="num">${netLabel}</dd></div>
-        </dl>`,
+      body: insuredBody({ insured: insuredSum, gained: gainedSum, lost: lostSum,
+                          priorInsured: priorRow?.insured }),
     }));
   }
 

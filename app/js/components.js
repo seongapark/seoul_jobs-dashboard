@@ -45,6 +45,34 @@ export function pairCard({ vacancy, seekers, ratio, placements }) {
   </div>`;
 }
 
+// 피보험자 카드 본문(값 + 전년동월대비 + 취득·상실·순증). 총괄 카드4·직종별
+// 카드8·산업별 카드11("8번과 같은 표"로 스펙이 못 박음)이 축(시도 전체/직종/
+// 산업)과 무관하게 그대로 공유한다 — 그래서 어느 축에서 왔는지 몰라도 되게
+// 순수 숫자만 받는다. "같은 달, 1년 전" 행을 찾는 것은 축마다 필터 기준이
+// 달라 화면이 각자 하고, 찾은 값(또는 없음)만 여기로 넘긴다.
+// priorInsured 가 없으면(시계열 자체가 없거나 매칭 행이 없으면) 전년동월대비
+// 줄만 빠지고 나머지는 그대로 나온다 — 카드 자체를 감추지 않는다.
+export function insuredBody({ insured, gained, lost, priorInsured }) {
+  const net = (gained ?? 0) - (lost ?? 0);
+  const netLabel = `${net > 0 ? "+" : ""}${num(net)}`;
+
+  let deltaRow = "";
+  if (priorInsured != null) {
+    const delta = insured - priorInsured;
+    const cls = delta >= 0 ? "is-up" : "is-down";
+    const arrow = delta >= 0 ? "▲" : "▼";
+    deltaRow = `<div class="deltarow"><span class="card__delta ${cls}">${arrow} ${num(Math.abs(delta))}<small>전년동월대비</small></span></div>`;
+  }
+
+  return `<div class="card__value num">${num(insured)}<small>명</small></div>
+    ${deltaRow}
+    <dl class="trio">
+      <div><dt>취득</dt><dd class="num">${num(gained)}</dd></div>
+      <div><dt>상실</dt><dd class="num">${num(lost)}</dd></div>
+      <div><dt>순증</dt><dd class="num">${netLabel}</dd></div>
+    </dl>`;
+}
+
 const BAR_VARIANT_CLASS = { jo: "", jh: "bar--jh", est: "bar--est" };
 
 // 가로 막대 랭킹(스펙 카드 6·10·12). 화면 규칙 4 — 값은 항상 막대에 직접
