@@ -204,7 +204,16 @@ export function render(store, selection) {
   // 자체가 `{ center: undefined }`라 어차피 못 찾는 값과 같은 길로 감춰진다.
   // selection.occupation/selection.industry 는 절대 안 읽는다(스펙 §4.4
   // 가 명시) — 스위처가 있는 다른 화면과 달리 이 카드는 "그 센터 전체"를
-  // 본다. 애초에 이 라우트엔 그 스위처 UI 자체가 없다.
+  // 본다.
+  //
+  // **그 보호막은 바로 아래 한 줄, `selectedRows` 가 아니라 원본
+  // `store.vacancy.rows` 를 쓰는 것이다.** 예전 주석은 "이 라우트엔 스위처
+  // UI 자체가 없다"고 적어 두었는데 I5 가 그 라우트에 직종 select 를 붙여
+  // (app.js 의 SWITCHER_AXIS.center) 더는 사실이 아니다 — 지금은 선택 직종이
+  // 실제로 존재하고, 카드 14·15 는 그것으로 걸러진 selectedRows 를 본다.
+  // 그러니 "같은 rows 니까" 하며 여기를 selectedRows 로 통일하지 마라. 그
+  // 순간 이 카드는 "그 센터 전체의 상위 산업·직종"이 아니라 "선택 직종 하나"가
+  // 되고, 상위 직종 절은 막대 한 줄짜리가 된다.
   if (hasValue(store.vacancy.rows, { center: selection.center })) {
     const centerName = selection.center;
 
