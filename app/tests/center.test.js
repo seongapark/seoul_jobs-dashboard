@@ -38,9 +38,17 @@ const store = {
       { sigungu: "41110", center: "수원고용센터", industry: "제조업", vacancy: 999999, seekers: 1 },
     ],
   },
-  // 이 화면은 구 이름을 store.sigunguNames 가 아니라 tile_layout.json 의
-  // name 필드로 낸다(그 필드 자체가 그 표에서 미리 접두를 뗀 값이다,
-  // task-14-report.md 참고) — 그래서 이 fixture 엔 sigunguNames 가 없다.
+  // 구 이름은 tile_layout.json 의 name(파생 사본)이 아니라 정본인 이
+  // 표에서 뽑는다(브리프 명시, 리뷰 지적) — 그래서 tileLayout.name 과
+  // sigunguNames 를 일부러 다르게 둬(예: "종로구" vs "서울특별시 종로구")
+  // 화면이 실제로 이 표를 읽는지 구분해서 확인한다.
+  sigunguNames: {
+    "11110": "서울특별시 종로구",
+    "11680": "서울특별시 강남구",
+    "41110": "경기도 수원시",
+    "28110": "인천광역시 중구",
+    "11170": "서울특별시 용산구",
+  },
   tileLayout: {
     "11110": { row: 1, col: 1, sido: "11", name: "종로구" },
     "11680": { row: 1, col: 2, sido: "11", name: "강남구" },
@@ -143,6 +151,16 @@ has(html16, "영업", "상위 직종 2위(영업 400)");
 // 카드 제목 자체가 "…상위 산업 · 직종"이라 bare "상위 산업"은 카드가
 // 없어도 어차피 안 나오지만, 아래 절 단위 검사와 조건을 맞춰 둔다).
 hasNot(htmlNoSel, '<div class="subhead">상위 산업</div>', "선택 센터가 없으면 카드 16이 통째로 빠진다");
+hasNot(htmlNoSel, "<details", "선택 센터가 없으면 카드 16(details)이 아예 안 나온다");
+
+// 카드 16의 감춤 판단은 hasValue() 하나를 거친다(리뷰 지적) — 정상 항해로는
+// selection.center 가 항상 centerOfSigungu 에서 오므로 존재하는 센터만
+// 들어오지만, 주소를 손으로 고쳐 존재하지 않는 센터 이름을 넣었을 때도
+// "선택이 없다"와 같은 길로 감춰져야 한다(if(selection.center) 만 보면
+// 이 경우 빈 막대 목록만 단 카드가 뜬다).
+const htmlUnknownCenter = render(store, { ...base, center: "존재하지않는센터" });
+hasNot(htmlUnknownCenter, "<details", "주소로 존재하지 않는 센터를 넣어도 카드 16이 감춰진다");
+hasNot(htmlUnknownCenter, "존재하지않는센터", "그 센터 이름조차 화면에 안 남는다");
 
 // 스위처 무관 — card16 부분(<details>…</details>)만 잘라서 비교한다.
 // html16 전체를 그대로 비교하지 않는 이유: 카드 14·15의 타일/칩 data-nav 는

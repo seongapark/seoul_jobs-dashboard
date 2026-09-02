@@ -1,5 +1,5 @@
 import { card, collapseCard, bars, esc, num, RATIO_NOTE } from "../components.js";
-import { hasValue, ratio, titleFor, period, selectionHash } from "../data.js";
+import { hasValue, ratio, titleFor, period, selectionHash, shortSigunguName } from "../data.js";
 import { render as renderTiles } from "../tilemap.js";
 
 // 센터별 화면 — 컨트롤러가 다시 쓴 브리프(task-14-brief.md) §전체가 유일한
@@ -96,9 +96,13 @@ export function render(store, selection) {
     if (tile) {
       const sums = bySigungu.get(selection.sigungu) ?? { vacancy: 0, seekers: 0 };
       const centerName = centerOfSigungu.get(selection.sigungu);
+      // 구 이름은 tile_layout.json 의 name(파생 사본)이 아니라 정본인
+      // store.sigunguNames 에서 뽑는다(브리프 명시, 리뷰 지적) — 배치
+      // 파일을 손으로 손봐도 화면 이름이 정본과 갈리지 않게 한다.
+      const guName = shortSigunguName(store.sigunguNames, selection.sigungu);
       selHtml = `<div class="mapsel">
         <div class="mapsel__head">
-          <span class="gu">${esc(tile.name)}</span>
+          <span class="gu">${esc(guName)}</span>
           ${centerName ? `<span class="sub">› ${esc(centerName)}</span>` : ""}
         </div>
         <dl class="mapsel__stats">
@@ -164,11 +168,17 @@ export function render(store, selection) {
     }));
   }
 
-  // 카드 16 — 〈선택센터〉 상위 산업 · 직종 (감춤: 선택 센터가 없을 때).
-  // selection.occupation/selection.industry 를 절대 읽지 않는다(스펙 §4.4
+  // 카드 16 — 〈선택센터〉 상위 산업 · 직종 (감춤: 선택 센터가 없거나, 있어도
+  // 그 센터의 행이 하나도 없을 때). 카드 감춤 규칙(화면 규칙 1)의 단일
+  // 판단점은 data.hasValue() 하나다(리뷰 지적) — `if (selection.center)`만
+  // 보면 "선택이 없다"와 "선택이 없는 데이터를 가리킨다"를 다르게 다뤄
+  // 주소를 손으로 고쳐 존재하지 않는 센터를 넣으면 빈 막대 목록만 뜬
+  // 카드가 나온다. selection.center 가 undefined 면 hasValue 의 selection
+  // 자체가 `{ center: undefined }`라 어차피 못 찾는 값과 같은 길로 감춰진다.
+  // selection.occupation/selection.industry 는 절대 안 읽는다(스펙 §4.4
   // 가 명시) — 스위처가 있는 다른 화면과 달리 이 카드는 "그 센터 전체"를
   // 본다. 애초에 이 라우트엔 그 스위처 UI 자체가 없다.
-  if (selection.center) {
+  if (hasValue(store.vacancy.rows, { center: selection.center })) {
     const centerName = selection.center;
 
     // 상위 산업 — store.vacancyIndustry(산업 축은 직종 축과 다른 그리드라
