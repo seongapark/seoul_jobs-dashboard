@@ -136,12 +136,19 @@ def test_vacancy_industry_requests_the_industry_axis(recorded_layout):
     assert recorded_layout[0]["rows"] == ["(근무지역)시군구", "산업_대분류"]
 
 
-def test_every_screen_dataset_has_a_fetcher():
+def test_monthly_fetchers_are_built_for_every_spec():
+    """표에 있는 데이터셋이 전부 실제 호출 가능한 fetcher 로 만들어지는가.
+
+    화면이 읽는 파일과 파이프라인 산출물의 대조는 여기가 아니라
+    `tests/test_data_contract.py` 가 한다 — 예전 이 자리의
+    `test_every_screen_dataset_has_a_fetcher` 는 **하드코딩된 집합끼리** 비교해
+    C1·C2 를 둘 다 그냥 통과시켰다(R55). 손으로 적은 목록은 손으로 틀린 곳과
+    같이 틀린다.
+    """
     built = fetchers.monthly_fetchers(browser=object(), cm=_CM(), get=_fake_get(),
                                       fetch=_FakeGrid())
-    assert set(built) == {"vacancy", "vacancy_industry", "vacancy_sido",
-                          "placement", "placement_sido",
-                          "insured", "insured_industry", "insured_sido", "mobility"}
+    assert set(built) == set(fetchers.MONTHLY_SPECS)
+    assert all(callable(make) for make in built.values())
 
 
 def test_vacancy_rows_are_parsed_and_limited_to_the_metro_area(recorded_layout):

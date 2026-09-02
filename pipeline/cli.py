@@ -17,12 +17,33 @@ import os
 import sys
 from datetime import date
 from pathlib import Path
+from typing import NamedTuple
 
 from playwright.sync_api import sync_playwright
 
 from pipeline import center_map, collect, est, fetchers, series
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+class HalfyearSpec(NamedTuple):
+    """반기 KOSIS 표 하나 — 무엇으로 받아 어디에 쓰고, 이름을 무엇과 대조하는가.
+
+    C2 — 이 표가 생기기 전에는 `est.collect_industry` 가 구현·테스트만 되고
+    부르는 곳이 테스트뿐이었다(산업 행이 한 줄도 수집되지 않았다). 산출물 목록을
+    코드 안 데이터로 두면 계약 테스트가 그것을 화면이 읽는 파일 목록과 실제로
+    대조할 수 있다 — 하드코딩된 집합끼리 비교하면 그 결함을 못 잡는다.
+    """
+
+    collector: object
+    compare_source: str     # 이름 겹침 검사의 상대가 되는 EIS 산출물 파일
+    compare_field: str      # 그 파일에서 이름을 뽑을 필드
+
+
+HALFYEAR_SPECS: dict[str, HalfyearSpec] = {
+    "est": HalfyearSpec(est.collect, "vacancy.json", "occupation"),
+    "est_industry": HalfyearSpec(est.collect_industry, "vacancy_industry.json", "industry"),
+}
 
 
 def latest_month() -> str:
@@ -199,15 +220,13 @@ def main(mode: str) -> int:
         # run_halfyear 를 한 번만 불러 직종별로만 떨어졌고, 그래서
         # data/est.json 에 industry_name 을 가진 행이 한 줄도 없었다 —
         # 산업별 화면의 카드 13 은 그 키로 조인하므로 영원히 감춰졌다.
-        result = collect.run_halfyear(
-            period, out_dir=out_dir, api_key=api_key,
-            compare_names=_compare_names(out_dir, source="vacancy.json",
-                                         field="occupation"))
-        result |= collect.run_halfyear(
-            period, out_dir=out_dir, api_key=api_key,
-            collector=est.collect_industry, out_name="est_industry",
-            compare_names=_compare_names(out_dir, source="vacancy_industry.json",
-                                         field="industry"))
+        result: dict = {}
+        for out_name, spec in HALFYEAR_SPECS.items():
+            result |= collect.run_halfyear(
+                period, out_dir=out_dir, api_key=api_key,
+                collector=spec.collector, out_name=out_name,
+                compare_names=_compare_names(out_dir, source=spec.compare_source,
+                                             field=spec.compare_field))
         print(f"halfyear({period}): {result}")
         return 0
 
