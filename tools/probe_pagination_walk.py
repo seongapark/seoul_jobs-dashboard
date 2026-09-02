@@ -63,21 +63,26 @@ def main() -> None:
 
         assert pager_count > 1, f"페이지네이션 그리드를 기대했는데 pager_count={pager_count}"
 
-        rows = olap_mod._walk_paginated_grid(
+        # Task 7b Fix round 4 (R15): _walk_paginated_grid 는 이제 list 가 아니라
+        # Grid(header, rows, summaries) 를 돌려준다 — .header/.rows/.summaries 로
+        # 명시적으로 꺼낸다("header_out, *body = rows" 같은 옛 언패킹은 더 이상
+        # 옳은 모양을 주지 않는다).
+        result = olap_mod._walk_paginated_grid(
             page, header=header, first_body=first_body, pager_count=pager_count
         )
-        header_out, *body = rows
 
         print("=== 검증 결과 ===")
         print("페이지 수:", pager_count)
-        print("누적 고유 행 수:", len(body))
-        print("헤더:", header_out)
-        print("첫 3행:", body[:3])
-        print("마지막 3행:", body[-3:])
+        print("누적 고유 행 수:", len(result.rows))
+        print("요약 행 수(총계 등):", len(result.summaries))
+        print("헤더:", result.header)
+        print("첫 3행:", result.rows[:3])
+        print("마지막 3행:", result.rows[-3:])
+        print("요약 행:", result.summaries)
 
         # 중복 없는지, 기대 총량과 맞는지 다시 한 번 확인
-        keys = {"".join(r) for r in body}
-        assert len(keys) == len(body), "중복 행이 섞여 있다"
+        keys = {"".join(r) for r in result.rows}
+        assert len(keys) == len(result.rows), "중복 행이 섞여 있다"
 
         browser.close()
 

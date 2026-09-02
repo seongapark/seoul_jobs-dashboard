@@ -55,14 +55,43 @@ Task 7b Fix round 2 (2026-09-02, tools/probe_pagination_dedup_evidence.py):
 
 Task 7b Fix round 3 (2026-09-02, 컨트롤러 R13/R14): 그래서 개수 기반 상한을
   버리고 **정체성 기반** 규칙으로 바꿨다 — 중복된 행은 그 첫 칸이 알려진
-  요약 라벨(`_SUMMARY_ROW_LABELS`: 총계/소계/합계/전체)일 때만 허용한다.
-  모르는 라벨이 반복되면(=그리드 구조를 이해하지 못했다는 뜻) 개수와
-  무관하게 시끄럽게 실패한다(R14). 그리고 이 프로젝트의 데이터 계약("유효
-  구직건수의 분해값을 더해 총계로 쓰지 않는다 — 총계는 총계 행에서 받는다")을
-  실제로 지킬 수 있도록, 허용된 요약 행은 본문에서 빼 별도로
-  (`_WithSummaries.summaries`) 돌려준다(R13) — 조용히 버리지 않는다.
+  요약 라벨(`_SUMMARY_ROW_LABELS`)일 때만 허용한다. 모르는 라벨이
+  반복되면(=그리드 구조를 이해하지 못했다는 뜻) 개수와 무관하게 시끄럽게
+  실패한다(R14). 그리고 이 프로젝트의 데이터 계약("유효구직건수의 분해값을
+  더해 총계로 쓰지 않는다 — 총계는 총계 행에서 받는다")을 실제로 지킬 수
+  있도록, 허용된 요약 행은 본문에서 빼 별도로 돌려준다(R13) — 조용히 버리지
+  않는다.
+
+Task 7b Fix round 4 (2026-09-02, 컨트롤러 R15/R16 — 리뷰 루프): 두 가지를
+  더 고쳤다.
+  1. (R15) Fix round 3 의 반환 타입 `_WithSummaries(list)` 는 list 를
+     상속해 `.summaries` 속성을 얹는 방식이었는데, 이 패턴은 슬라이싱·
+     `list(...)`·`+`·컴프리헨션 등 어떤 list 연산을 거치기만 해도
+     `.summaries` 가 조용히 사라진다 — 특히 자연스러운 다음 소비 패턴인
+     `parse_grid(fetch_grid(...))` 는 `list[dict]` 를 돌려주는데 총계가
+     아무 예외 없이 그냥 없어진다. R13 이 막으려던 바로 그 조용한 손실을
+     되살리는 결함이었다. `Grid(header, rows, summaries)` 라는 명시적
+     타입(typing.NamedTuple)으로 바꿨다 — 필드 3개짜리 튜플이라 옛
+     `header, *body = grid` 언패킹(대상 2개 + 별표 1개)은 문법상은 계속
+     되지만, `body` 가 이제 `[grid.rows, grid.summaries]`(리스트 두 개짜리)
+     로 완전히 뒤바뀐다 — `header` 는 우연히 값이 맞아 조용해 보여도, `body`
+     를 실제로 쓰는 다음 줄(행을 순회하거나 `"".join(row)` 를 하는 등)에서
+     빠르게 `TypeError`/`AssertionError` 로 깨진다. 조용히 총계가 사라지는
+     쪽보다 이렇게 시끄럽게 깨져 호출부를 강제로 고치게 만드는 쪽이 낫다는
+     판단이다. 저장소 안 모든 호출부(테스트, `fetch_and_parse_grid`,
+     `tools/probe_pagination_walk.py`)를 `grid.header`/`grid.rows`/
+     `grid.summaries` 로 갱신했다.
+  2. (R16) `_SUMMARY_ROW_LABELS` 를 실측으로 확인된 `{"총계"}` 하나로
+     줄였다. 소계/합계/전체는 확인된 적이 없고, 특히 "전체"는 실제 지역/
+     범주 값으로도 그럴듯해 요약 행으로 잘못 분류하면 데이터 행 하나가
+     조용히 본문에서 빠질 위험이 있었다 — 코드는 화이트리스트라고 주장하면서
+     주석은 "확인 전엔 추가하지 않는다"고 말하는 자기모순이기도 했다. 다른
+     보고서에서 실제로 소계가 고정 반복되는 게 확인되면, 그때는 이 목록에
+     추가하기 전에 먼저 예외로 시끄럽게 실패한다 — 그게 설계 의도다.
 """
 from __future__ import annotations
+
+from typing import NamedTuple
 
 # 실측: EIS 데이터그리드 페이저의 페이지당 행 수 (tools/probe_flat_sigungu.py,
 # (지역별)시군구 단독 축 ~250행 → 페이지 6개 x 50행/페이지).
@@ -104,14 +133,15 @@ class OlapPageWalkError(OlapPaginationError):
         페이지와 겹쳤을 가능성 — 위 항목보다 일반적인 체크).
       - 마지막 페이지가 아닌 페이지가 본문 행 수 `_PAGE_SIZE` 와 다르다.
       - 페이지를 넘나들며 반복된 행이 있는데, 그 첫 칸이 알려진 요약 행 라벨
-        (`_SUMMARY_ROW_LABELS`: 총계/소계/합계/전체)이 아니다 (R14). 실측
-        (2026-09-02, tools/probe_pagination_dedup_evidence.py)으로 확인된 진짜
-        원인은 "그룹 헤더가 페이지 경계에 걸쳐 다시 그려진다"가 아니라,
+        (`_SUMMARY_ROW_LABELS` — 실측으로 확인된 `"총계"` 하나뿐, R16)이
+        아니다 (R14). 실측(2026-09-02,
+        tools/probe_pagination_dedup_evidence.py)으로 확인된 진짜 원인은
+        "그룹 헤더가 페이지 경계에 걸쳐 다시 그려진다"가 아니라,
         **그랜드토탈(총계) 행이 매 페이지 맨 위에 고정(pinned)되어 반복
         렌더된다**는 것이었다 — 알려진 요약 라벨의 반복은 정상으로 보고
-        통과시키되 본문에서 빼 `.summaries` 로 돌려주고(R13), 모르는 라벨의
-        반복은 원인 불명의 손실/중복으로 보고 그 행과 등장 페이지를 그대로
-        이름 붙여 예외를 낸다.
+        통과시키되 본문에서 빼 `Grid.summaries` 로 돌려주고(R13), 모르는
+        라벨의 반복은 원인 불명의 손실/중복으로 보고 그 행과 등장 페이지를
+        그대로 이름 붙여 예외를 낸다.
     """
 
 
@@ -129,40 +159,65 @@ def _click_page(page, page_number: int) -> None:
 # (pinned)되어 반복 렌더된다. 이 목록에 없는 라벨이 페이지를 넘나들며
 # 반복되면(=진짜 데이터 행이 중복/손실됐을 수 있음) 개수와 무관하게 시끄럽게
 # 실패한다 — 새로운 요약 라벨을 실측으로 확인하기 전에는 여기 추가하지 않는다.
-_SUMMARY_ROW_LABELS = frozenset({"총계", "소계", "합계", "전체"})
+# R16(2026-09-02, 리뷰 루프): "소계"/"합계"/"전체" 는 이 실측으로 확인된 적이
+# 없어 뺐다 — 특히 "전체"는 실제 지역/범주 값으로도 그럴듯해서, 미확인 상태로
+# 화이트리스트에 넣어두면 진짜 데이터 행을 요약 행으로 오분류해 조용히 본문에서
+# 빼버릴 위험이 있었다(화이트리스트가 스스로 "확인 전엔 추가 안 한다"고 말하면서
+# 확인 안 된 라벨을 이미 담고 있던 자기모순). 다른 보고서에서 소계 등이 실제로
+# 고정 반복되는 게 확인되면, 그 전까지는 예외로 시끄럽게 실패하는 게 의도된
+# 동작이다 — 그때 증거를 들고 이 목록에 추가한다.
+_SUMMARY_ROW_LABELS = frozenset({"총계"})
 
 
-class _WithSummaries(list):
-    """`_walk_paginated_grid` 의 반환 타입.
+class Grid(NamedTuple):
+    """`_walk_paginated_grid`/`fetch_grid` 의 반환 타입 (R15, 리뷰 루프).
 
-    평범한 list[list[str]] 그대로 동작해(`header, *body = rows` 기존 언패킹과
-    100% 호환) 본문은 `[header, *data_rows]`(요약 행 제외)다. 그와 별도로
-    `.summaries` 속성에 본문에서 뺀 요약 행(총계 등, R13)을 담아 돌려준다 —
-    데이터 계약("총계는 총계 행에서 받는다")을 지키려면 본문에서 빼야 하지만,
-    조용히 버리면 안 되기 때문이다. 요약 행이 없으면 빈 리스트.
+    이전엔 `_WithSummaries(list)` — list 를 상속해 `.summaries` 속성을 얹는
+    방식이었다. 그런데 list 서브클래스의 인스턴스 속성은 슬라이싱·
+    `list(x)`·`+`·컴프리헨션 등 어떤 list 연산을 거치기만 해도 조용히
+    사라진다. 특히 자연스러운 다음 소비 패턴인 `parse_grid(fetch_grid(...))`
+    는 예외도 에러도 없이 그냥 `list[dict]` 를 돌려주는데 총계가 이미
+    사라진 뒤다 — R13 이 막으려던 바로 그 조용한 데이터 손실을 되살리는
+    결함이었다. 그래서 명시적 타입(`typing.NamedTuple`)으로 바꿨다. 필드가
+    3개(header/rows/summaries)라 옛 `header, *body = grid` 언패킹(대상 2개 +
+    별표 1개)은 문법 자체는 여전히 통하지만 `body` 가 `[grid.rows,
+    grid.summaries]`(리스트 두 개짜리)로 완전히 뒤바뀐다 — `body` 를 실제로
+    쓰는 다음 줄(행을 순회하거나 `"".join(row)` 를 하는 등)에서 빠르게
+    `TypeError` 로 깨진다. 조용한 손실보다 이렇게 호출부를 강제로 고치게
+    만드는 시끄러운 깨짐이 낫다는 판단이다.
+
+    `rows` 는 요약 행이 빠진 본문(R13), `summaries` 는 거기서 빠진 요약 행
+    (총계 등, 없으면 빈 리스트)이다. `parse_grid` 에 넘기려면
+    `parse_grid([grid.header, *grid.rows])` 처럼 명시적으로 조합해야 한다
+    (parse_grid 시그니처는 R2 대로 손대지 않았다) — `parse_grid(grid)` 처럼
+    `Grid` 를 그대로 넘기면 예외 없이 조합만 잘못된 `list[dict]` 를 돌려줄 수
+    있으니, 반드시 `.header`/`.rows`(그리고 필요하면 `.summaries`)를 명시적으로
+    골라 넘겨야 한다.
     """
 
+    header: list[str]
+    rows: list[list[str]]
     summaries: list[list[str]]
 
 
 def _walk_paginated_grid(
     page, *, header: list[str], first_body: list[list[str]], pager_count: int
-) -> _WithSummaries:
+) -> Grid:
     """`.dx-datagrid-pager` 페이지 버튼을 순서대로 눌러가며 전 페이지를 누적한다.
 
     fetch_grid 가 이미 1페이지째를 읽어(header, first_body) pager_count>1 임을
     확인한 뒤에만 호출한다. 페이지 사이 `_PAGE_ADVANCE_WAIT_MS` 만큼 쉰다(정중함).
 
-    반환(`_WithSummaries`, list[list[str]] 호환)은 여러 독립된 기준으로
-    완전성이 확인된 경우에만 이뤄진다:
+    반환(`Grid`, list 가 아니다 — R15)은 여러 독립된 기준으로 완전성이
+    확인된 경우에만 이뤄진다:
       1. 페이지 이동마다 실제로 새 행이 보태졌는가 (안 그러면 클릭이 안 먹었거나
          이전/다른 페이지와 겹친 것).
       2. 마지막 페이지를 제외한 모든 페이지가 정확히 `_PAGE_SIZE` 행인가.
       3. 페이지를 넘나들며 반복된 행이 있다면, 그 행의 첫 칸이 알려진 요약 라벨
          (`_SUMMARY_ROW_LABELS`)인가 (R14) — 개수가 아니라 정체성으로 판단한다.
          아니면 그 행과 등장 페이지를 그대로 이름 붙여 예외를 낸다.
-    허용된 요약 행(총계 등)은 본문에서 빼 반환값의 `.summaries` 로 따로
-    담는다(R13). 어느 기준이든 안 맞으면 조용히 넘어가지 않고 예외를 낸다.
+    허용된 요약 행(총계 등)은 본문에서 빼 `Grid.summaries` 로 따로 담는다
+    (R13). 어느 기준이든 안 맞으면 조용히 넘어가지 않고 예외를 낸다.
     """
     if pager_count < 2:
         # 호출부(fetch_grid)가 이미 pager_count>1 일 때만 부르므로 정상 경로에서는
@@ -269,11 +324,10 @@ def _walk_paginated_grid(
     # Task 7b Fix round 3 (컨트롤러 R13): 데이터 계약("유효구직건수의 분해값을
     # 더해 총계로 쓰지 않는다 — 총계는 총계 행에서 받는다")을 지키려면 허용된
     # 요약 행(위에서 걸러짐)을 본문에 섞어 반환하면 안 된다 — 그렇다고 버리지도
-    # 않는다. 본문에서 빼 별도 `.summaries` 로 담아 돌려준다.
+    # 않는다. 본문에서 빼 명시적 `Grid.summaries` 로 담아 돌려준다(R15: list
+    # 서브클래스에 속성을 얹는 방식은 쓰지 않는다 — 조용히 사라질 수 있다).
     data_rows = [row for key, row in seen.items() if key not in summaries]
-    result = _WithSummaries([header, *data_rows])
-    result.summaries = list(summaries.values())
-    return result
+    return Grid(header=header, rows=data_rows, summaries=list(summaries.values()))
 
 
 _EXTRACT_JS = r"""
@@ -325,8 +379,15 @@ def parse_grid(rows: list[list[str]]) -> list[dict]:
     return [dict(zip(header, row)) for row in body]
 
 
-def fetch_grid(url: str, *, page, max_scrolls: int = 200) -> list[list[str]]:
+def fetch_grid(url: str, *, page, max_scrolls: int = 200) -> Grid:
     """Playwright page 로 뷰어를 열고 렌더된 PivotGrid 를 읽는다.
+
+    반환은 `Grid(header, rows, summaries)` 다(R15) — list 가 아니므로 옛
+    `header, *body = fetch_grid(...)` 언패킹은 더 이상 쓸 수 없다(의도적:
+    `parse_grid` 에 넘기려면 `parse_grid([grid.header, *grid.rows])` 처럼
+    명시적으로 조합해야 한다). 스크롤-누적 경로(페이저 없음)는 요약 행을
+    따로 거르지 않으므로 `summaries` 가 항상 빈 리스트다 — 실측으로 그
+    경로에서 고정 반복 요약 행 문제가 확인된 적이 없어서다.
 
     작은 표(예: 시도 단위, 17행)는 스크롤 없이 전량이 DOM 에 있는 것을 확인했다.
     dataScroll=Y 가상화가 걸리는 큰 표(예: 시군구 x 직종, 최대 약 2,450행)에
@@ -433,23 +494,39 @@ def fetch_grid(url: str, *, page, max_scrolls: int = 200) -> list[list[str]]:
             "느린 렌더링이거나 필터/레이아웃이 잘못됐을 수 있다."
         )
 
-    return [header, *seen.values()]
+    # 스크롤-누적(단일 페이지) 경로는 요약 행을 따로 거르지 않는다 — 페이지네이션
+    # 경로(_walk_paginated_grid)와 달리 이 경로에서 요약 행이 고정 반복되는
+    # 문제가 실측으로 확인된 적이 없다. summaries 는 빈 리스트로 둔다.
+    return Grid(header=header, rows=list(seen.values()), summaries=[])
 
 
-def fetch_and_parse_grid(url: str, *, browser, max_scrolls: int = 200) -> list[dict]:
-    """뷰어를 열어 그리드를 읽고 바로 dict 리스트로 편다 (fetch_grid + parse_grid).
+class ParsedGrid(NamedTuple):
+    """`fetch_and_parse_grid` 의 반환 타입 (R15와 같은 이유로 명시적 타입).
 
-    fetch_grid 가 반환에 `.summaries` 를 실어 보내면(R13, 페이지네이션 경로 —
-    총계 등 요약 행) 같은 방식으로 파싱해 결과의 `.summaries` 속성으로 그대로
-    넘긴다 — 조용히 버리지 않는다. parse_grid 자체의 시그니처
-    (list[list[str]] -> list[dict], R2)는 그대로다.
+    `Grid` 와 마찬가지로 list 서브클래스에 속성을 얹는 방식(예전
+    `_WithSummaries`)은 슬라이싱 등을 거치면 `.summaries` 가 조용히 사라질 수
+    있어 쓰지 않는다. `rows`/`summaries` 는 이미 `parse_grid` 를 거친
+    `list[dict]` 다.
+    """
+
+    rows: list[dict]
+    summaries: list[dict]
+
+
+def fetch_and_parse_grid(url: str, *, browser, max_scrolls: int = 200) -> ParsedGrid:
+    """뷰어를 열어 그리드를 읽고 바로 dict 로 편다 (fetch_grid + parse_grid 를 잇는 이음매).
+
+    반환은 `ParsedGrid(rows, summaries)` 다 — `fetch_grid` 가 돌려주는
+    `Grid.header`/`Grid.rows`/`Grid.summaries` 를 각각 `parse_grid` 에
+    명시적으로 조합해 넘긴다(총계 등 요약 행이 있으면 그것도 같은 방식으로
+    파싱해 `.summaries` 로 그대로 넘긴다 — 조용히 버리지 않는다). `parse_grid`
+    자체의 시그니처(list[list[str]] -> list[dict], R2)는 그대로다.
     """
     page = browser.new_page()
     try:
-        rows = fetch_grid(url, page=page, max_scrolls=max_scrolls)
+        grid = fetch_grid(url, page=page, max_scrolls=max_scrolls)
     finally:
         page.close()
-    parsed = _WithSummaries(parse_grid(rows))
-    raw_summaries = getattr(rows, "summaries", None)
-    parsed.summaries = parse_grid([rows[0], *raw_summaries]) if raw_summaries else []
-    return parsed
+    rows = parse_grid([grid.header, *grid.rows])
+    summaries = parse_grid([grid.header, *grid.summaries]) if grid.summaries else []
+    return ParsedGrid(rows=rows, summaries=summaries)

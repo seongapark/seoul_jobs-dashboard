@@ -133,6 +133,21 @@ class _FakePage:
         self._call += 1
         return [self._header, *body]
 
+    def close(self):
+        """browser.new_page() 로 열린 page 를 닫는 흉내 — fetch_and_parse_grid
+        가 finally 에서 부른다. 아무것도 안 해도 된다."""
+
+
+class _FakeBrowser:
+    """`fetch_and_parse_grid(url, browser=...)` 가 쓰는 `browser.new_page()` 만
+    흉내낸다 — 이미 만들어둔 `_FakePage` 하나를 그대로 돌려준다."""
+
+    def __init__(self, page: "_FakePage"):
+        self._page = page
+
+    def new_page(self):
+        return self._page
+
 
 def test_fetch_grid_accumulates_across_windows_and_dedups_overlap():
     """가상화된 뷰포트가 매번 겹치는 창을 보여줘도 고유 행만 한 번씩 쌓인다."""
@@ -144,12 +159,11 @@ def test_fetch_grid_accumulates_across_windows_and_dedups_overlap():
     ]
     page = _FakePage(windows=windows)
 
-    rows = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+    grid = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
 
-    header, *body = rows
-    assert header == ["지역", "값"]
-    assert {r[0] for r in body} == {"a", "b", "c", "d"}
-    assert len(body) == 4  # 중복 없이 고유 행만
+    assert grid.header == ["지역", "값"]
+    assert {r[0] for r in grid.rows} == {"a", "b", "c", "d"}
+    assert len(grid.rows) == 4  # 중복 없이 고유 행만
 
 
 def test_fetch_grid_terminates_as_soon_as_a_window_adds_nothing_new():
@@ -162,11 +176,10 @@ def test_fetch_grid_terminates_as_soon_as_a_window_adds_nothing_new():
     ]
     page = _FakePage(windows=windows)
 
-    rows = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+    grid = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
 
-    header, *body = rows
-    assert {r[0] for r in body} == {"a", "b"}
-    assert "c" not in {r[0] for r in body}
+    assert {r[0] for r in grid.rows} == {"a", "b"}
+    assert "c" not in {r[0] for r in grid.rows}
     assert page.scroll_calls == 2  # windows[1] 까지 갔다가 windows[2] 에서 안 늘어 멈춤
 
 
@@ -222,12 +235,12 @@ def test_fetch_grid_walks_all_pages_and_accumulates_in_order():
     page3 = [[f"row{i}", str(i)] for i in range(100, 123)]
     page = _FakePage(windows=[page1, page2, page3], pager_count=3)
 
-    rows = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+    grid = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
 
-    header, *body = rows
-    assert header == ["지역", "값"]
-    assert len(body) == 123
-    assert [r[0] for r in body] == [f"row{i}" for i in range(123)]
+    assert grid.header == ["지역", "값"]
+    assert len(grid.rows) == 123
+    assert [r[0] for r in grid.rows] == [f"row{i}" for i in range(123)]
+    assert grid.summaries == []
     assert page.click_calls == 2  # 1페이지는 이미 로드됨 — 2, 3페이지로만 이동
     assert page.scroll_calls == 0  # 스크롤 폴백을 쓰지 않는다
 
@@ -301,25 +314,25 @@ def test_fetch_grid_raises_when_a_duplicated_row_has_an_unknown_label():
     assert "???" in str(exc_info.value)
 
 
-def test_fetch_grid_does_not_raise_when_summary_rows_outnumber_page_boundaries():
-    """R14: 총계와 소계가 둘 다 페이지마다(3페이지 전부) 고정 반복되면 중복이
-    4개인데 경계는 2개뿐(옛 상한 pager_count-1=2)이다 — 옛 개수 기반 상한이면
-    실패했을 상황이지만, 새 규칙은 정체성(둘 다 알려진 요약 라벨)만 보므로
-    실패하지 않는다. 옛 상한이 실제로 사라졌다는 증거다."""
+def test_fetch_grid_does_not_raise_when_a_summary_row_repeats_more_than_page_boundaries_allow():
+    """R14/R16: 총계 행이 페이지마다 두 번씩(예: 상단 고정 반복 + 우연한
+    재렌더 — 실측으로 확인된 정상 패턴의 과장) 등장하면 3페이지에 걸쳐 총
+    6번, 중복 5개다. 옛 개수 기반 상한(pager_count-1=2)이었다면 한참 초과해
+    실패했을 상황이지만, 새 규칙은 개수가 아니라 정체성(알려진 요약 라벨인가)
+    만 보므로 실패하지 않는다 — 옛 상한이 실제로 사라졌다는 증거다.
+    (R16: 소계/합계/전체는 미확인이라 라벨 목록에서 뺐으므로, 이 테스트는
+    실측으로 확인된 "총계" 하나만으로 같은 요점을 보인다.)"""
     total_row = ["총계", "100", "200"]
-    subtotal_row = ["소계", "10", "20"]
-    page1 = [total_row, subtotal_row] + [[f"row{i}", str(i)] for i in range(48)]
-    page2 = [total_row, subtotal_row] + [[f"row{i}", str(i)] for i in range(48, 96)]
-    page3 = [total_row, subtotal_row] + [[f"row{i}", str(i)] for i in range(96, 119)]
+    page1 = [total_row, total_row] + [[f"row{i}", str(i)] for i in range(48)]
+    page2 = [total_row, total_row] + [[f"row{i}", str(i)] for i in range(48, 96)]
+    page3 = [total_row, total_row] + [[f"row{i}", str(i)] for i in range(96, 119)]
     page = _FakePage(windows=[page1, page2, page3], pager_count=3)
 
-    rows = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+    grid = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
 
-    header, *body = rows
-    assert total_row not in body
-    assert subtotal_row not in body
-    assert len(body) == 119  # 고유 데이터 행만 (요약 행 둘은 본문에서 빠진다)
-    assert {tuple(r) for r in rows.summaries} == {tuple(total_row), tuple(subtotal_row)}
+    assert total_row not in grid.rows
+    assert len(grid.rows) == 119  # 고유 데이터 행만 (요약 행은 본문에서 빠진다)
+    assert grid.summaries == [total_row]  # 총계는 한 번만, 별도로
 
 
 def test_fetch_grid_raises_when_a_non_last_page_is_short():
@@ -344,10 +357,9 @@ def test_fetch_grid_does_not_raise_pagination_error_for_single_page_grid():
     windows = [[["a", "1"], ["b", "2"]], [["a", "1"], ["b", "2"]]]
     page = _FakePage(windows=windows, pager_count=1)
 
-    rows = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+    grid = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
 
-    header, *body = rows
-    assert {r[0] for r in body} == {"a", "b"}
+    assert {r[0] for r in grid.rows} == {"a", "b"}
 
 
 # ---------------------------------------------------------------------------
@@ -394,10 +406,9 @@ def test_fetch_grid_returns_normally_when_no_pager_and_row_count_is_not_a_page_b
     body = [[f"row{i}", str(i)] for i in range(37)]
     page = _FakePage(windows=[body], pager_count=1, pager_wait_raises=True)
 
-    rows = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+    grid = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
 
-    header, *out_body = rows
-    assert len(out_body) == 37
+    assert len(grid.rows) == 37
 
 
 # ---------------------------------------------------------------------------
@@ -428,10 +439,46 @@ def test_fetch_grid_collapses_the_pinned_grand_total_row_observed_live():
         header=["(지역별)시군구", "유효구인인원(전체)", "유효구직자수(전체)"],
     )
 
-    rows = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+    grid = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
 
-    header, *body = rows
-    assert header == ["(지역별)시군구", "유효구인인원(전체)", "유효구직자수(전체)"]
-    assert total_row not in body  # 본문에는 총계가 섞이지 않는다 (R13)
-    assert len(body) == 114  # 114개 고유 지역만
-    assert rows.summaries == [total_row]  # 총계는 한 번만, 별도로
+    assert grid.header == ["(지역별)시군구", "유효구인인원(전체)", "유효구직자수(전체)"]
+    assert total_row not in grid.rows  # 본문에는 총계가 섞이지 않는다 (R13)
+    assert len(grid.rows) == 114  # 114개 고유 지역만
+    assert grid.summaries == [total_row]  # 총계는 한 번만, 별도로
+
+
+# ---------------------------------------------------------------------------
+# Task 7b Fix round 4 (컨트롤러 R15, 리뷰 루프) — fetch_and_parse_grid 는
+# fetch_grid(Grid) 를 parse_grid 로 잇는 이음매다. R15 전에는 저장소 안에
+# 부르는 곳도 테스트도 없었다 — Grid 로 이음매가 명시적이 된 지금, 총계 같은
+# 요약 행이 이 이음매를 거쳐도 살아남는지(회귀 안 하는지) 가짜 page/browser 로
+# 직접 확인한다. round trip 이 실제로 검증할 게 있다는 뜻이므로 삭제 대신 유지.
+# ---------------------------------------------------------------------------
+
+def test_fetch_and_parse_grid_round_trips_header_rows_and_summaries():
+    """fetch_and_parse_grid 는 fetch_grid 의 Grid(header, rows, summaries) 를
+    parse_grid 로 두 번(rows, summaries) 파싱해 ParsedGrid 로 돌려준다 — 총계
+    행이 이 왕복을 거쳐도 조용히 사라지지 않아야 한다(R13/R15 가 지키려는
+    데이터 계약을 실제 이음매에서 확인)."""
+    total_row = ["총계", "165,821", "1,550,154"]
+    page1 = [total_row] + [[f"region{i}", str(i)] for i in range(49)]
+    page2 = [total_row] + [[f"region{i}", str(i)] for i in range(49, 98)]
+    page = _FakePage(
+        windows=[page1, page2],
+        pager_count=2,
+        header=["(지역별)시군구", "유효구인인원(전체)", "유효구직자수(전체)"],
+    )
+    browser = _FakeBrowser(page)
+
+    result = olap.fetch_and_parse_grid("http://fake", browser=browser, max_scrolls=10)
+
+    assert isinstance(result, olap.ParsedGrid)
+    assert all(isinstance(d, dict) for d in result.rows)
+    assert {d["(지역별)시군구"] for d in result.rows} == {f"region{i}" for i in range(98)}
+    assert "총계" not in {d["(지역별)시군구"] for d in result.rows}
+    assert len(result.summaries) == 1
+    assert result.summaries[0] == {
+        "(지역별)시군구": "총계",
+        "유효구인인원(전체)": "165,821",
+        "유효구직자수(전체)": "1,550,154",
+    }
