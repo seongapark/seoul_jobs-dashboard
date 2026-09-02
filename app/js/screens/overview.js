@@ -1,5 +1,5 @@
 import { card, pairCard, trend, num, RATIO_NOTE } from "../components.js";
-import { ratio, hasValue } from "../data.js";
+import { ratio, hasValue, period, half, priorYearPeriod } from "../data.js";
 
 // 총괄 화면 — 스펙 §4.1. 시도 단위(R4)로 거른다: store.vacancySido/
 // placementSido/insuredSido 를 읽는다 — store.vacancy/placement/insured
@@ -12,8 +12,8 @@ import { ratio, hasValue } from "../data.js";
 // (Task 9b가 낸 마감년월 축 시계열, R19/R27)를 읽는다. data.load() 가 이
 // 파일들을 선택적으로 싣기 때문에(R31) 수집이 아직 없으면 undefined 이고,
 // 그 경우도 hasValue 가 카드를 감춘다 — 없는 이력을 지어내지 않는다.
-const period = (p) => p.replace(/(\d{4})(\d{2})/, "$1.$2");
-const half = (p) => `’${p.slice(2, 4)} ${p.slice(4) === "01" ? "상반기" : "하반기"}`;
+// period/half 는 직종별 화면(Task 12)도 그대로 쓰므로 data.js 로 올렸다 —
+// 화면마다 복사하지 않는다.
 
 export function render(store, selection = { sido: "11" }) {
   const bySido = { sido: selection.sido };
@@ -75,8 +75,7 @@ export function render(store, selection = { sido: "11" }) {
       // 전년동월대비(R32) — 직종 축 시계열이 없어 이번 판은 시도 단위
       // 카드 4에만 붙인다. 같은 sido·12개월 전 같은 달 행이 있을 때만
       // 붙이고, 없으면 그 줄만 뺀다(전월대비는 요구에서 명시적으로 뺐다).
-      const priorPeriod = String(Number(store.insuredSido.period.slice(0, 4)) - 1)
-        + store.insuredSido.period.slice(4);
+      const priorPeriod = priorYearPeriod(store.insuredSido.period);
       const priorRow = store.insuredSeries?.rows?.find((r) =>
         r.sido === selection.sido && r.period === priorPeriod);
       let deltaRow = "";

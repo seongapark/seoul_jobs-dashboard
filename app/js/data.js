@@ -1,5 +1,20 @@
 const MAX_TITLE = 12;
 
+// 마감년월 "202607" -> "2026.07" 표시용. overview 가 먼저 냈고 직종별·
+// 산업별 화면이 그대로 가져다 쓴다 — 화면마다 복사하지 않는다.
+export const period = (p) => p.replace(/(\d{4})(\d{2})/, "$1.$2");
+
+// est 의 반기 코드(예 "202601")를 "'26 상반기" 로. 01월 수집은 상반기,
+// 07월 수집은 하반기를 뜻한다(집계 관행).
+export const half = (p) => `’${p.slice(2, 4)} ${p.slice(4) === "01" ? "상반기" : "하반기"}`;
+
+// 전년동월대비(R32)가 찾는 "같은 달, 1년 전" 마감년월. overview 카드4와
+// 직종별 카드8이 똑같이 쓴다 — 시계열에 찾는 축(occupation 등)이 없으면
+// find 가 그냥 못 찾을 뿐이고, 이 함수 자체는 축을 모른다.
+export function priorYearPeriod(p) {
+  return String(Number(p.slice(0, 4)) - 1) + p.slice(4);
+}
+
 // 제목 12자 규칙 — 화면 규칙 2. 12자를 넘으면 잘라내고 말줄임표를 붙인다.
 export function titleFor(name, suffix) {
   const head = name.length > MAX_TITLE ? name.slice(0, MAX_TITLE) + "…" : name;
