@@ -252,3 +252,89 @@ def test_collect_insured_series_over_sample_fixture():
     checks.check_series_shape(out)
     checks.check_series_months(out, minimum=2)
     assert {"00", "11", "28", "41"} <= {r["sido"] for r in out}
+
+
+# ---------------------------------------------------------------------------
+# R39 — run_series 는 previous 를 덮어쓰지 않고 병합한다.
+#
+# R34 실측으로 "한 그리드로 24개월"이 성립하지 않는다는 게 드러났다 — EIS
+# 는 closYm 이 가리키는 한 달치만 준다. 그래서 시계열은 달마다 한 조각씩
+# 받아 쌓는 방식(R39)으로 바뀌었고, run_series 는 새로 받은 조각을 지난번
+# 파일(previous)에 병합해야 한다 — 덮어쓰면 이력이 통째로 날아간다(R19가
+# 막으려던 바로 그 실패).
+# ---------------------------------------------------------------------------
+
+def _period_range(n, start_year=2024, start_month=1):
+    """start_year/start_month 부터 n개월 연속 "YYYYMM" 문자열 (series 행 값 그대로)."""
+    out = []
+    y, m = start_year, start_month
+    for _ in range(n):
+        out.append(f"{y}{m:02d}")
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+    return out
+
+
+def test_run_series_merges_new_month_onto_previous_history(tmp_path):
+    """지난달 파일(202605~202607) + 새 달(202608) = 4개월, 옛 달이 살아 있다."""
+    previous_rows = [{"period": p, "sido": "11", "vacancy": 1}
+                      for p in ("202605", "202606", "202607")]
+    new_rows = [{"period": "202608", "sido": "11", "vacancy": 2}]
+    previous = {"vacancy_series": {"rows": previous_rows}}
+    fetchers = {"vacancy_series": lambda: new_rows}
+
+    collect.run_series(out_dir=tmp_path, fetchers=fetchers, previous=previous)
+
+    written = json.loads((tmp_path / "vacancy_series.json").read_text(encoding="utf-8"))
+    periods = sorted(r["period"] for r in written["rows"])
+    assert periods == ["202605", "202606", "202607", "202608"]
+
+
+def test_run_series_new_value_wins_on_overlapping_key(tmp_path):
+    """같은 (sido, period) 가 겹치면 새로 받은 값이 이긴다 — 확정치 정정 대응.
+
+    check_series_months(minimum=2 기본값)를 만족시키려고 겹치지 않는
+    달(202606)을 하나 더 둔다 — 이 테스트가 보려는 건 202607 하나의 덮어
+    쓰기 여부일 뿐이다.
+    """
+    previous_rows = [{"period": "202606", "sido": "11", "vacancy": 5},
+                      {"period": "202607", "sido": "11", "vacancy": 999}]
+    new_rows = [{"period": "202607", "sido": "11", "vacancy": 42}]
+    previous = {"vacancy_series": {"rows": previous_rows}}
+    fetchers = {"vacancy_series": lambda: new_rows}
+
+    collect.run_series(out_dir=tmp_path, fetchers=fetchers, previous=previous)
+
+    written = json.loads((tmp_path / "vacancy_series.json").read_text(encoding="utf-8"))
+    assert len(written["rows"]) == 2
+    by_period = {r["period"]: r for r in written["rows"]}
+    assert by_period["202607"]["vacancy"] == 42
+    assert by_period["202606"]["vacancy"] == 5
+
+
+def test_run_series_caps_to_24_months_after_merging_not_before(tmp_path):
+    """옛 3개월 + 새 22개월 = 25개월 — 병합 뒤에야 24개월로 잘린다(옛 것에만 걸지 않는다)."""
+    old_periods = _period_range(3, start_year=2024, start_month=1)     # 202401~202403
+    new_periods = _period_range(22, start_year=2024, start_month=4)    # 202404~202601
+    previous_rows = [{"period": p, "sido": "11", "vacancy": 1} for p in old_periods]
+    new_rows = [{"period": p, "sido": "11", "vacancy": 2} for p in new_periods]
+    previous = {"vacancy_series": {"rows": previous_rows}}
+    fetchers = {"vacancy_series": lambda: new_rows}
+
+    collect.run_series(out_dir=tmp_path, fetchers=fetchers, previous=previous)
+
+    written = json.loads((tmp_path / "vacancy_series.json").read_text(encoding="utf-8"))
+    periods = sorted(r["period"] for r in written["rows"])
+    assert len(periods) == 24
+    assert old_periods[0] not in periods   # 202401 은 가장 오래됐으니 잘린다
+    assert new_periods[-1] in periods      # 가장 최근은 남는다
+
+
+def test_run_series_without_previous_behaves_like_first_collection(tmp_path):
+    """previous=None(첫 수집)이면 지금까지의 동작 그대로다."""
+    fetchers = {"vacancy_series": lambda: _good_series_rows(),
+                "insured_series": lambda: _good_series_rows()}
+    summary = collect.run_series(out_dir=tmp_path, fetchers=fetchers, previous=None)
+    assert summary == {"vacancy_series": 2, "insured_series": 2}

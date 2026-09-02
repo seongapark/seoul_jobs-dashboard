@@ -138,29 +138,69 @@ def run_monthly(period, *, out_dir, fetchers, cm, previous=None):
     return {name: len(fetched.rows) for name, fetched in collected.items()}
 
 
-def run_series(*, out_dir, fetchers):
-    """마감년월 축 시계열(Task 9b, R19/R27)을 모아 쓴다.
+def _series_key(row: dict) -> tuple:
+    """시계열 행의 병합 키. 지금은 (sido, period) 뿐이지만, 직종 축 등이
+    늘어나면 여기만 넓히면 되도록 함수로 뽑아 둔다."""
+    return (row.get("sido"), row.get("period"))
 
-    run_monthly 와 같은 원칙 — 검사를 다 통과한 뒤에야 파일을 쓴다. 단
-    fetcher 계약이 다르다: 시계열은 총계 검산이 필요 없으므로(월별 합산
-    자체가 R19 위반이다) `Fetched` 로 감싸지 않고 `() -> list[dict]` 를
-    그대로 받는다 — period 인자도 없다(기본 레이아웃을 그대로 받아 여러
-    달을 한 번에 백필하므로 "이번 달"이라는 개념이 없다).
+
+def run_series(*, out_dir, fetchers, previous=None):
+    """마감년월 축 시계열(Task 9b, R19/R27/R39)을 모아 쓴다.
+
+    R34 실측(task-9b-report.md 참고)으로 확인된 것 — EIS 유효구인구직/
+    피보험자 OLAP 큐브는 마감년월을 행 축에 놓아도 뷰어 URL 의 closYm 이
+    가리키는 딱 그 한 달치만 돌려준다. "축만 옮기면 한 그리드로 24개월이
+    한 번에 온다"는 애초 전제(R27)는 이 실측으로 깨졌다. 그래서 R39 가
+    방식을 바꿨다: closYm 을 달마다 바꿔가며 **한 번에 한 조각씩** 받아
+    쌓는다(첫 수집은 closYm 을 24번 바꿔 24개월을 채우고, 이후 수집은
+    새 달 하나만 더한다) — 그 반복 자체(몇 번을 어떤 closYm 으로 부를지)
+    는 이 함수의 몫이 아니라 나중 태스크(pipeline/fetchers.py)가 맡는다.
+    run_series 는 "한 번에 받은 조각을 기존 이력에 안전하게 얹는 것"만
+    안다 — 원래 있던 이력을 새 조각으로 덮어써서 날리면(R19 가 막으려던
+    바로 그 실패) 안 되므로, 새로 받은 행을 previous 에 병합한다.
+
+    previous 는 run_monthly 의 previous 와 같은 결이다 — 지난번에 쓴
+    파일 내용 그대로(`{"rows": [...]}` 모양)를 데이터셋 이름으로 담은
+    매핑이고, 없으면(첫 수집) 새로 받은 행만으로 시작한다.
+
+    병합 규칙(`_series_key`, (sido, period)): 같은 키가 겹치면 **새로
+    받은 값이 이긴다** — 가결산이 확정치로 정정돼 내려올 수 있어서다.
+    병합한 뒤에 `series.SERIES_MONTHS`(24) 상한을 적용한다 — 새로 받은
+    조각에만 걸면 옛 이력이 잘리므로, 반드시 **병합된 전체**에 걸어야
+    한다. 검사(`check_series_shape`/`check_series_months`)도 병합
+    결과에 대해 돌고, 검사를 다 통과한 뒤에야 파일을 쓴다(run_monthly 와
+    같은 원칙 — 절반만 갱신된 상태를 만들지 않는다).
+
+    fetcher 계약은 `run_monthly` 와 다르다: 시계열은 총계 검산이 필요
+    없으므로(월별 합산 자체가 R19 위반이다) `Fetched` 로 감싸지 않고
+    `() -> list[dict]` 를 그대로 받는다 — period 인자도 없다(그 순간의
+    closYm 이 어떤 값인지는 fetcher 가 알아서 정하고, run_series 는 결과
+    행이 어느 달인지만 병합 키로 본다).
     """
+    from pipeline import series
+
     collected: dict[str, list[dict]] = {name: fetch() for name, fetch in fetchers.items()}
 
-    for rows in collected.values():
+    merged: dict[str, list[dict]] = {}
+    for name, rows in collected.items():
+        prior_rows = (previous or {}).get(name, {}).get("rows", [])
+        by_key: dict[tuple, dict] = {_series_key(row): row for row in prior_rows}
+        for row in rows:
+            by_key[_series_key(row)] = row  # 겹치면 새 값이 이긴다 — 확정치 정정 대응
+        merged[name] = series._cap_recent_months(list(by_key.values()))
+
+    for rows in merged.values():
         checks.check_series_shape(rows)
         checks.check_series_months(rows)
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    for name, rows in collected.items():
+    for name, rows in merged.items():
         (out_dir / f"{name}.json").write_text(
             json.dumps({"rows": rows, "collected_at": stamp}, ensure_ascii=False),
             encoding="utf-8")
-    return {name: len(rows) for name, rows in collected.items()}
+    return {name: len(rows) for name, rows in merged.items()}
 
 
 def run_halfyear(period, *, out_dir, api_key, collector=None):
