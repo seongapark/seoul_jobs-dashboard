@@ -439,3 +439,33 @@ def test_group_subtotal_rows_are_not_reparented(recorded_layout):
 
     assert by_code["11110"]["vacancy"] == 6       # 소계 9,999 가 섞이지 않았다
     assert by_code["41110"]["vacancy"] == 800     # 권선구 소계도 안 섞였다
+
+
+def test_colspan_aggregate_row_is_not_counted_as_data(recorded_layout):
+    """실측으로 잡은 값 오류 — 축 칸이 전부 같은 행은 리프가 아니라 집계 행이다.
+
+    시군구 × 직종 그리드에 ['서울특별시 마포구', '서울특별시 마포구', 728, 5646]
+    이 있었다(그룹이 페이지 경계에 걸려 헤더가 폭 전체로 다시 그려진 것으로 보인다).
+    값이 마포구 전체 합이라 '… 전체' 규칙에 안 걸려 데이터 행으로 세어졌고,
+    마포구가 정확히 두 배가 되면서 서울 시도 검산이 +728 초과했다."""
+    rows, summaries = _vacancy_grid()
+    rows.append({"(근무지역)시군구": "서울특별시 종로구", "직종_중분류": "서울특별시 종로구",
+                 "2026년 07월_유효구인인원(전체)": "728",
+                 "2026년 07월_유효구직자수(전체)": "5,646"})
+    grid = _FakeGrid(result=olap.ParsedGrid(rows, summaries))
+    built = fetchers.monthly_fetchers(browser=object(), cm=_CM(), get=_fake_get(), fetch=grid)
+
+    by_code = {r["sigungu"]: r for r in built["vacancy"]("202607").rows}
+    assert by_code["11110"]["vacancy"] == 6          # 728 이 더해지지 않았다
+
+
+def test_mobility_rows_with_the_same_industry_on_both_axes_are_kept(recorded_layout):
+    """축 셋인 mobility 에서 산업 == 산업(이전) 은 정상 행이다 — 오탐 금지."""
+    label = "2026년 07월"
+    rows = [{"(사업장)시도": "서울", "산업_대분류": "C 제조업",
+             "산업(이전)_대분류": "C 제조업", f"{label}_경력이동자수(월)": "1,280"}]
+    grid = _FakeGrid(result=olap.ParsedGrid(rows, []))
+    built = fetchers.monthly_fetchers(browser=object(), cm=_CM(), get=_fake_get(), fetch=grid)
+
+    out = built["mobility"]("202607").rows
+    assert len(out) == 1 and out[0]["movers"] == 1280

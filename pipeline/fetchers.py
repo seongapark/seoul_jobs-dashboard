@@ -266,14 +266,32 @@ def _normalize(rows: list[dict], period: str) -> list[dict]:
     return out
 
 
-def _is_subtotal(row: dict, spec: Spec) -> bool:
-    """그룹 소계 행인가 (실측: 라벨이 '… 전체' 로 끝난다).
+def _is_aggregate_row(row: dict, spec: Spec) -> bool:
+    """리프 데이터 행이 아니라 집계/헤더 행인가. 본문에 섞이면 이중계상이 된다.
 
-    본문에 섞이면 이중계상이 된다. 바깥 레벨 소계는 모든 라벨 칸이 소계
-    텍스트라 `_metro_only` 의 지역 이름 대조에서 이미 걸리지만, 안쪽 레벨
-    소계(예: 시도는 '서울'인데 산업 칸이 'C 제조업 전체')는 여기서만 걸린다.
+    두 가지를 본다 — 둘 다 실측으로 확인된 모양이다.
+
+    1) 라벨이 `'… 전체'` 로 끝난다 (그룹 소계). 바깥 레벨 소계는 모든 칸이 소계
+       텍스트라 지역 이름 대조에서도 걸리지만, 안쪽 레벨 소계(시도는 '서울'인데
+       산업 칸이 'C 제조업 전체')는 여기서만 걸린다.
+
+    2) **축 칸이 전부 같은 값이다** (중첩 축일 때만). colspan 으로 레벨 전체를
+       덮은 셀이 펴지면 이 모양이 된다. 실측(2026-09-02)에서 이것이 값을
+       틀리게 만든 것을 잡았다 — 시군구 × 직종 그리드에 `['서울특별시 마포구',
+       '서울특별시 마포구', 728, 5646]` 이라는 행이 있었다. 마포구 그룹이 페이지
+       경계에 걸리면서 그룹 헤더가 폭 전체로 다시 그려진 것으로 보이는데,
+       값이 마포구 **전체 합**이라 `'… 전체'` 규칙에 안 걸린 채 데이터 행으로
+       세어져 **마포구가 정확히 두 배(728 → 1,456)** 가 됐다. 그 때문에 서울
+       시도 검산이 구인 +728 · 구직 +5,646 만큼 초과했다(다른 구·시도는 전부
+       정확히 일치했다). 리프 행은 축마다 다른 이름을 갖는다 — 시군구 칸과
+       직종 칸이 같은 값일 수는 없다 — 이므로 이 규칙은 진짜 데이터 행을
+       잡지 않는다. 축이 셋인 mobility 도 안전하다: 산업과 산업(이전)이 같은
+       행은 정상이지만 시도 칸까지 같을 수는 없다.
     """
-    return any((row.get(field) or "").endswith(_SUBTOTAL_SUFFIX) for field in spec.rows)
+    values = [(row.get(field) or "").strip() for field in spec.rows]
+    if len(spec.rows) >= 2 and len(set(values)) == 1:
+        return True
+    return any(value.endswith(_SUBTOTAL_SUFFIX) for value in values)
 
 
 # 수도권 시도 이름표 -> 행정표준코드. 시군구 이름은 전부 이 셋 중 하나로 시작한다.
@@ -318,7 +336,7 @@ def _reparent_general_districts(rows: list[dict], spec: Spec) -> list[dict]:
         #     아래 예외를 때린다(=수집이 통째로 죽는다).
         #   - 더 나쁜 것: "서울특별시 종로구 전체" 는 앞부분이 실제 시군구
         #     ("서울특별시 종로구")라 **조용히 종로구로 합쳐져 이중계상**된다.
-        if _is_subtotal(row, spec):
+        if _is_aggregate_row(row, spec):
             out.append(row)
             continue
         name = (row.get(spec.region) or "").strip()
@@ -358,7 +376,7 @@ def _split_metro(rows: list[dict], spec: Spec) -> tuple[list[dict], dict]:
     kept: list[dict] = []
     residual: dict[str, dict] = {}
     for row in rows:
-        if _is_subtotal(row, spec):
+        if _is_aggregate_row(row, spec):
             continue
         name = (row.get(spec.region) or "").strip()
         if name in known:
