@@ -1,0 +1,198 @@
+/* app/css/app.css
+   목업(vacancy-dashboard-mockup.html)의 컴포넌트 CSS를 그대로 옮긴다.
+   :root 토큰, *, body, .num, .header*, .notice, 기본 .card/.badge 는
+   core/tokens.css · core/base.css 에 이미 있어 여기서 되풀이하지 않는다. */
+
+/* 상단 세그먼트 탭 */
+.segments { display: flex; background: var(--card); border-bottom: 1px solid var(--border); }
+.segment {
+  flex: 1; text-align: center; padding: 10px 2px; font-size: 12.5px; font-weight: 500;
+  color: var(--text-muted); border-bottom: 2px solid transparent;
+}
+.segment--active { color: var(--accent); font-weight: 700; border-bottom-color: var(--accent); }
+
+/* 지역/기준월 스위처 */
+.switcher { display: flex; gap: 8px; padding: 12px 16px 4px; }
+.switcher .sel {
+  flex: 1; min-width: 0; font-size: 13.5px; font-weight: 500; color: var(--text); background: var(--card);
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; display: flex; justify-content: space-between;
+  align-items: center; gap: 6px; overflow: hidden;
+}
+.switcher .sel span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.switcher .sel::after { content: "\25BE"; color: var(--text-muted); font-size: 11px; flex: none; }
+
+/* 카드 목록 */
+.cards { display: flex; flex-direction: column; gap: 10px; padding: 8px 16px 14px; }
+.card__head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.card__name { font-size: 14px; font-weight: 700; color: var(--text); display: flex; align-items: center; gap: 6px; }
+.card__meta { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+.card__value { font-size: 24px; font-weight: 700; margin-top: 6px; }
+.card__value small { font-size: 13px; font-weight: 500; color: var(--text-secondary); margin-left: 3px; }
+.card__delta { font-size: 12.5px; font-weight: 600; margin-top: 2px; }
+.card__delta.is-up { color: var(--up); }
+.card__delta.is-down { color: var(--down); }
+.deltarow { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 3px; }
+.deltarow .card__delta { margin-top: 0; }
+.deltarow .card__delta small { font-weight: 500; color: var(--text-muted); margin-left: 3px; font-size: 11px; }
+.card__note { font-size: 11.5px; color: var(--text-secondary); margin-top: 8px; line-height: 1.55; }
+
+.bul { margin: 8px 0 0; padding: 0; list-style: none; font-size: 11.5px; color: var(--text-secondary); line-height: 1.62; }
+.bul li { position: relative; padding-left: 9px; }
+.bul li::before { content: "\B7"; position: absolute; left: 1px; color: var(--text-muted); }
+.bul b { color: var(--text); font-weight: 700; }
+.asofbox .bul, .scopebox .bul { margin: 0; font-size: 11px; color: inherit; line-height: 1.6; }
+.asofbox .bul li::before, .scopebox .bul li::before { color: inherit; opacity: .6; }
+.asofbox .bul b, .scopebox .bul b { color: inherit; }
+
+/* 배지 색 = 출처 (화면 규칙 3) */
+.badge--jo { background: var(--c-jo-bg); color: #0d7f57; }
+.badge--jh { background: var(--c-jh-bg); color: #1c5aa3; }
+.badge--est { background: var(--src-est-bg); color: #b34317; }
+.badge--none { background: #f2f4f7; color: var(--text-muted); font-weight: 600; }
+
+.axisline { font-size: 10.5px; color: var(--text-muted); padding: 6px 16px 0; line-height: 1.5; }
+.axisline b { color: var(--text-secondary); }
+
+/* 출처 점 (구인/구직/사업체노동력조사) */
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; display: inline-block; }
+.dot--jo { background: var(--c-jo); }
+.dot--jh { background: var(--c-jh); }
+.dot--est { background: var(--src-est); }
+
+/* 구인·구직 두 칸 */
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+.pane { border: 1px solid var(--border); border-radius: 9px; padding: 9px 10px; border-top-width: 3px; }
+.pane--jo { border-top-color: var(--c-jo); }
+.pane--jh { border-top-color: var(--c-jh); }
+.pane__lab { font-size: 11px; font-weight: 700; display: flex; align-items: center; gap: 5px; }
+.pane--jo .pane__lab { color: #0d7f57; }
+.pane--jh .pane__lab { color: #1c5aa3; }
+.pane__val { font-size: 21px; font-weight: 700; margin-top: 3px; letter-spacing: -.02em; }
+.pane__val small { font-size: 11px; font-weight: 500; color: var(--text-secondary); margin-left: 2px; }
+.pane__sub { font-size: 10.5px; color: var(--text-muted); margin-top: 3px; line-height: 1.5; }
+.pairfoot {
+  display: flex; gap: 14px; margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--border);
+  font-size: 11.5px; color: var(--text-secondary);
+}
+.pairfoot b { color: var(--text); font-weight: 700; }
+
+/* 접히는 카드 (채용계획인원 등) */
+details.card { padding: 0; }
+details.card > summary { list-style: none; cursor: pointer; padding: 12px 14px; display: block; }
+details.card > summary::-webkit-details-marker { display: none; }
+.sumhead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.sumname { font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 6px; }
+.caretrow { display: flex; justify-content: flex-end; margin-top: 9px; }
+.caret { color: var(--text-muted); font-size: 11px; font-weight: 600; }
+details[open] .caret { color: var(--accent); }
+.detail { padding: 0 14px 14px; border-top: 1px solid var(--border); margin-top: 2px; }
+.subhead { font-size: 12px; font-weight: 700; color: var(--text); margin: 14px 0 0; }
+
+/* 3분할 통계 (취득/상실/순증 등) */
+.trio { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 10px 0 0; }
+.trio div { border: 1px solid var(--border); border-radius: 8px; padding: 8px 9px; }
+.trio dt { font-size: 10.5px; color: var(--text-muted); }
+.trio dd { margin: 2px 0 0; font-size: 16px; font-weight: 700; }
+.trio dd small { font-size: 11px; font-weight: 500; color: var(--text-secondary); }
+
+/* 가로 막대 랭킹 — 값을 막대에 직접 단다 (화면 규칙 4) */
+.bars { display: flex; flex-direction: column; gap: 9px; margin-top: 10px; }
+.bar { display: grid; grid-template-columns: 1fr auto; gap: 3px 8px; align-items: baseline; }
+.bar__lab { font-size: 12px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar__val { font-size: 12px; font-weight: 700; }
+.bar--sub { padding-left: 13px; position: relative; }
+.bar--sub::before { content: ""; position: absolute; left: 5px; top: 2px; bottom: 9px; width: 1px; background: var(--border); }
+.bar--sub .bar__lab, .bar--sub .bar__val { font-size: 11px; color: var(--text-muted); }
+.bar--sub .bar__track { height: 6px; }
+.bar__mult { font-size: 10px; font-weight: 600; color: var(--text-muted); margin-left: 5px; }
+.bar__track { grid-column: 1 / -1; height: 9px; border-radius: 2px 4px 4px 2px; background: var(--c-jo); min-width: 3px; }
+.bar--est .bar__track { background: var(--src-est); }
+.bar--jh .bar__track { background: var(--c-jh); }
+.bar--hi .bar__lab { color: var(--accent); font-weight: 700; }
+.bar--hi .bar__val { color: var(--accent); }
+.bar--hi .bar__track { background: var(--accent); }
+
+/* 세로 막대 — 자리를 아껴야 하는 곳 */
+.cols { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; margin-top: 10px; }
+.col { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 0; }
+.col__val { font-size: 9.5px; font-weight: 700; color: var(--text-secondary); white-space: nowrap; }
+.col__track { height: 52px; width: 100%; display: flex; align-items: flex-end; }
+.col__track i { width: 100%; background: var(--src-est); border-radius: 4px 4px 2px 2px; min-height: 3px; }
+.col__lab { font-size: 9px; color: var(--text-muted); white-space: nowrap; }
+.cols--jh .col__track i { background: var(--c-jh); }
+
+/* 칩 토글 */
+.chips { display: flex; gap: 5px; margin-top: 9px; flex-wrap: wrap; }
+.chip { padding: 4px 10px; border-radius: 999px; font-size: 11.5px; border: 1px solid var(--border); color: var(--text-muted); background: var(--card); }
+.chip--on { background: var(--accent-light); border-color: transparent; color: var(--accent); font-weight: 700; }
+
+/* 표 */
+.tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 8px; }
+.tbl th { text-align: right; font-size: 10.5px; font-weight: 600; color: var(--text-muted); padding: 0 0 6px; border-bottom: 1px solid var(--border); }
+.tbl th:first-child { text-align: left; }
+.tbl td { padding: 7px 0; text-align: right; border-bottom: 1px solid var(--border); }
+.tbl td:first-child { text-align: left; color: var(--text-secondary); }
+.tbl tr:last-child td { border-bottom: 0; }
+.tbl tr.is-me td { font-weight: 700; color: var(--text); }
+.tbl td.neg { color: var(--down); }
+
+/* 나비 막대 — 센터별 구인 vs 구직 */
+.bf { display: grid; grid-template-columns: 1fr 92px 1fr; align-items: center; gap: 7px 6px; margin-top: 10px; }
+.bf__head { font-size: 10px; font-weight: 700; color: var(--text-muted); text-align: center; }
+.bf__head.l { text-align: right; color: #0d7f57; }
+.bf__head.r { text-align: left; color: #1c5aa3; }
+.bf__l { display: flex; align-items: center; justify-content: flex-end; gap: 5px; }
+.bf__r { display: flex; align-items: center; gap: 5px; }
+.bf__l i { height: 11px; border-radius: 3px 2px 2px 3px; background: var(--c-jo); }
+.bf__r i { height: 11px; border-radius: 2px 3px 3px 2px; background: var(--c-jh); }
+.bf__n { font-size: 10px; font-weight: 700; color: var(--text-secondary); white-space: nowrap; }
+.bf__c { font-size: 10.5px; color: var(--text-secondary); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bf__c.is-sel { color: var(--accent); font-weight: 700; }
+
+/* 지도 타일 (센터별 — 구인배수 카토그램) */
+.tilemap { display: grid; grid-template-columns: repeat(15, 1fr); gap: 2px; margin-top: 10px; }
+.tile { aspect-ratio: 1; border-radius: 2px; }
+.tile.on { outline: 2px solid var(--text); outline-offset: 1px; z-index: 1; }
+.mapsel {
+  display: flex; flex-direction: column; gap: 7px; margin-top: 9px; padding: 9px 10px; border-radius: 8px;
+  background: var(--accent-light); color: var(--accent); font-size: 11.5px; font-weight: 700;
+}
+.mapsel__head { display: flex; align-items: center; gap: 6px; }
+.mapsel .gu { display: inline-flex; align-items: center; gap: 5px; }
+.mapsel .gu::before { content: ""; width: 9px; height: 9px; border-radius: 2px; background: var(--s5); }
+.mapsel .sub { margin-left: auto; font-weight: 500; color: var(--text-secondary); font-size: 10.5px; }
+.mapsel__stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.mapsel__stats div { background: var(--card); border-radius: 6px; padding: 6px 8px; }
+.mapsel__stats dt { font-size: 9.5px; color: var(--text-muted); font-weight: 500; }
+.mapsel__stats dd { margin: 1px 0 0; font-size: 14px; font-weight: 700; color: var(--text); }
+.mapsel__stats dd small { font-size: 10px; font-weight: 500; color: var(--text-secondary); margin-left: 1px; }
+.maplegend { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 11px; }
+.ramp { display: flex; flex-direction: column; gap: 3px; }
+.ramp__nm { font-size: 10px; font-weight: 700; }
+.ramp__nm.s { color: #0d7f57; }
+.ramp__nm.g { color: #1c5aa3; }
+.ramp__nm.i { color: #8e3570; }
+.ramp__row { display: flex; gap: 1px; }
+.ramp__row i { flex: 1; height: 8px; border-radius: 1px; }
+.ramp__ends { display: flex; justify-content: space-between; font-size: 8.5px; color: var(--text-muted); }
+
+/* 경고·기준 상자 */
+.scopebox {
+  display: flex; gap: 9px; margin: 0 16px 12px; padding: 10px 12px; border-radius: 8px;
+  background: var(--warn-bg); color: var(--warn-fg); font-size: 11.5px; line-height: 1.6;
+}
+.asofbox {
+  display: flex; gap: 8px; padding: 9px 11px; border-radius: 8px; background: #f7f8fa;
+  border: 1px solid var(--border); color: var(--text-secondary); font-size: 11px; line-height: 1.6; margin-top: 12px;
+}
+
+/* 범례 + 추세선 */
+.legend { display: flex; gap: 12px; font-size: 10.5px; color: var(--text-secondary); margin-top: 8px; }
+.legend span { display: inline-flex; align-items: center; gap: 5px; }
+.trend { display: block; width: 100%; height: 104px; margin-top: 8px; }
+
+/* 순번 핀 (카드 번호 — 보고서와 화면을 잇는다) */
+.pin {
+  display: inline-grid; place-items: center; width: 19px; height: 19px; border-radius: 50%;
+  background: var(--accent); color: #fff; font-size: 11px; font-weight: 700; flex: none;
+}
