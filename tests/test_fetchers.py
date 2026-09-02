@@ -5,7 +5,7 @@ Playwright 도 뜨지 않는다.
 """
 import pytest
 
-from pipeline import fetchers, layout
+from pipeline import fetchers, layout, olap
 from pipeline.collect import Fetched
 
 MENU_URL = ("https://eis.work24.go.kr/olap/report/viewer.do?USER=abc%3D%3D"
@@ -117,7 +117,7 @@ def test_month_url_rejects_a_bad_period():
 
 def test_vacancy_requests_the_sigungu_by_occupation_axis(recorded_layout):
     rows, summaries = _vacancy_grid()
-    grid = _FakeGrid(result=fetchers.ParsedGridLike(rows, summaries))
+    grid = _FakeGrid(result=olap.ParsedGrid(rows, summaries))
     built = fetchers.monthly_fetchers(browser=object(), cm=_CM(), get=_fake_get(), fetch=grid)
     built["vacancy"]("202607")
     assert recorded_layout[0]["rows"] == ["(근무지역)시군구", "직종_중분류"]
@@ -130,7 +130,7 @@ def test_vacancy_industry_requests_the_industry_axis(recorded_layout):
         row["산업_대분류"] = row.pop("직종_중분류")
     for row in summaries:
         row["산업_대분류"] = row.pop("직종_중분류")
-    grid = _FakeGrid(result=fetchers.ParsedGridLike(rows, summaries))
+    grid = _FakeGrid(result=olap.ParsedGrid(rows, summaries))
     built = fetchers.monthly_fetchers(browser=object(), cm=_CM(), get=_fake_get(), fetch=grid)
     built["vacancy_industry"]("202607")
     assert recorded_layout[0]["rows"] == ["(근무지역)시군구", "산업_대분류"]
@@ -146,7 +146,7 @@ def test_every_screen_dataset_has_a_fetcher():
 
 def test_vacancy_rows_are_parsed_and_limited_to_the_metro_area(recorded_layout):
     rows, summaries = _vacancy_grid()
-    grid = _FakeGrid(result=fetchers.ParsedGridLike(rows, summaries))
+    grid = _FakeGrid(result=olap.ParsedGrid(rows, summaries))
     built = fetchers.monthly_fetchers(browser=object(), cm=_CM(), get=_fake_get(), fetch=grid)
     fetched = built["vacancy"]("202607")
     assert isinstance(fetched, Fetched)
@@ -160,7 +160,7 @@ def test_vacancy_rows_are_parsed_and_limited_to_the_metro_area(recorded_layout):
 def test_period_that_does_not_match_the_requested_month_is_rejected(recorded_layout):
     """closYm 이 안 먹었는데 조용히 지난달 값을 쓰면 시계열이 통째로 거짓이 된다."""
     rows, summaries = _vacancy_grid(period="202606")
-    grid = _FakeGrid(result=fetchers.ParsedGridLike(rows, summaries))
+    grid = _FakeGrid(result=olap.ParsedGrid(rows, summaries))
     built = fetchers.monthly_fetchers(browser=object(), cm=_CM(), get=_fake_get(), fetch=grid)
     with pytest.raises(fetchers.FetchError):
         built["vacancy"]("202607")
@@ -172,7 +172,7 @@ def test_period_that_does_not_match_the_requested_month_is_rejected(recorded_lay
 
 def test_totals_come_from_the_summary_row(recorded_layout):
     rows, summaries = _vacancy_grid()
-    grid = _FakeGrid(result=fetchers.ParsedGridLike(rows, summaries))
+    grid = _FakeGrid(result=olap.ParsedGrid(rows, summaries))
     built = fetchers.monthly_fetchers(browser=object(), cm=_CM(), get=_fake_get(), fetch=grid)
     fetched = built["vacancy"]("202607")
     assert fetched.totals == {"vacancy": 165821, "seekers": 1550154}
@@ -181,7 +181,7 @@ def test_totals_come_from_the_summary_row(recorded_layout):
 def test_totals_are_none_when_the_grid_gave_no_summary_row(recorded_layout):
     """지어내지 않는다 — run_monthly 가 그 자체를 실패로 보게 둔다(R18)."""
     rows, _ = _vacancy_grid()
-    grid = _FakeGrid(result=fetchers.ParsedGridLike(rows, []))
+    grid = _FakeGrid(result=olap.ParsedGrid(rows, []))
     built = fetchers.monthly_fetchers(browser=object(), cm=_CM(), get=_fake_get(), fetch=grid)
     assert built["vacancy"]("202607").totals is None
 
@@ -196,7 +196,7 @@ def _series_grid(period):
              f"{label}_유효구인인원(전체)": "10",
              f"{label}_유효구직자수(전체)": "100"}
             for name in ("서울", "경기", "인천", "부산")]
-    return fetchers.ParsedGridLike(rows, [])
+    return olap.ParsedGrid(rows, [])
 
 
 def test_series_fetches_once_per_month_and_merges(recorded_layout):

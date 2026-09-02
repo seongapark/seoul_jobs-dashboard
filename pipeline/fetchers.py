@@ -86,13 +86,6 @@ class SeriesBackfillError(RuntimeError):
     """시계열 백필에서 절반을 넘는 달이 실패했을 때 낸다 — 반쪽 수집을 조용히 넘기지 않는다."""
 
 
-class ParsedGridLike(NamedTuple):
-    """`olap.ParsedGrid` 와 같은 모양 (테스트가 가짜 그리드를 만들 때 쓴다)."""
-
-    rows: list[dict]
-    summaries: list[dict]
-
-
 # ---------------------------------------------------------------------------
 # 데이터셋 표 — 여기만 데이터셋마다 다르다.
 # ---------------------------------------------------------------------------
@@ -271,7 +264,7 @@ def _totals(summaries: list[dict], spec: Spec) -> dict | None:
     return None
 
 
-def _grid(spec: Spec, period: str, *, browser, get, fetch) -> ParsedGridLike:
+def _grid(spec: Spec, period: str, *, browser, get, fetch) -> olap.ParsedGrid:
     url = month_url(eis_report.REPORTS[spec.report], period, get=get)
     return fetch(url, browser=browser,
                  after_load=lambda page: layout.set_layout(
