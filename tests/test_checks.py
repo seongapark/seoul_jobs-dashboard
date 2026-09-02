@@ -72,6 +72,15 @@ def test_est_seam_reads_the_industry_axis_when_there_is_no_occupation_key():
         checks.check_est_seam(rows)
 
 
+def test_est_seam_keeps_the_all_occupations_row_on_its_own_axis():
+    """"전직종" 행의 occupation 은 정확히 ""(거짓값)이다 — 축을 고를 때 `or` 를
+    쓰면 그 행만 산업 축으로 새어 엉뚱한 키에 묶인다(I1 실측: C3='keco2026_')."""
+    rows = [{"period": "202502", "occupation": "", "item": "채용계획인원", "value": 100},
+            {"period": "202601", "occupation": "", "item": "채용계획인원", "value": 1000}]
+    with pytest.raises(checks.CheckFailed):
+        checks.check_est_seam(rows)
+
+
 def test_est_seam_passes_industry_rows_that_do_not_jump():
     rows = [{"period": "202502", "industry": "C", "item": "채용인원", "value": 100},
             {"period": "202601", "industry": "C", "item": "채용인원", "value": 110},

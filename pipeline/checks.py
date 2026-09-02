@@ -73,7 +73,10 @@ def check_est_seam(rows) -> None:
     # (run_halfyear 가 collector 하나를 부른다) 두 축이 한 키로 뭉칠 일은 없다.
     by_key: dict[tuple, dict[str, int]] = {}
     for row in rows:
-        axis = row.get("occupation") or row.get("industry")
+        # `or` 가 아니라 dict 기본값으로 고른다: 직종 행의 "전직종"은 occupation
+        # 이 정확히 ""(거짓값)이라 `or` 를 쓰면 그 행만 산업 축으로 새어 다른
+        # 키에 묶인다. 키가 있으면 그 값을 그대로 쓴다.
+        axis = row.get("occupation", row.get("industry"))
         by_key.setdefault((axis, row["item"]), {})[row["period"]] = row["value"]
     for key, series in by_key.items():
         if "202502" in series and "202601" in series:

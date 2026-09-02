@@ -93,9 +93,9 @@ export function render(store, selection) {
     if (!centerOfSigungu.has(r.sigungu)) centerOfSigungu.set(r.sigungu, r.center);
   }
 
-  // 카드 14 — 구인배수 지도 (감춤: vacancy 행이 없을 때). 대상이 없는
-  // 카드가 아니라 지도 자체가 대상이라 화면 규칙 2 그대로 "구인배수
-  // 지도"로 시작한다.
+  // 카드 14 — 구인배수 지도 (감춤: 이 선택으로 남는 행이 없을 때). 직종을
+  // 안 고르면 지도 자체가 대상이라 제목이 "구인배수 지도" 그대로이고, 고르면
+  // 화면 규칙 2 대로 그 직종 이름으로 시작한다(titleOf).
   if (hasValue(selectedRows, {})) {
     const values = {};
     for (const [code, sums] of bySigungu) {
