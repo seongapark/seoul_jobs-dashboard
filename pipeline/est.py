@@ -10,7 +10,7 @@ keco2018_ -> keco2026_ 로 바뀌고 항목 수도 182 -> 186 으로 늘었다�
 """
 from __future__ import annotations
 
-from pipeline import kosis
+from pipeline import eis, kosis
 
 TABLES = {
     "DT_118N_DEN052": {"first": "202101", "last": "202302", "keco": "keco2018_"},
@@ -87,6 +87,18 @@ def to_number(text):
     return int(float(text))
 
 
+def _name(raw: dict):
+    """raw 의 C3_NM(직종·산업 이름)을 정규화해서 돌려준다.
+
+    실측(R40, 컨트롤러가 KOSIS 를 직접 불러 확인)으로 C3_NM 값이 코드
+    접두("02 경영·행정·사무직")와 EIS 와 다른 구분자(ㆍ, U+318D)를 쓰는
+    것이 드러났다 — eis.normalize_name() 을 거쳐야 두 출처의 이름이
+    실제로 겹친다. 키가 아예 없으면 None 그대로 둔다(빈 문자열은 est 의
+    실제 값과 헷갈린다, R33)."""
+    value = raw.get("C3_NM")
+    return eis.normalize_name(value) if value is not None else None
+
+
 def collect(periods, *, api_key, fetch=kosis.fetch):
     rows = []
     for period in periods:
@@ -109,7 +121,7 @@ def collect(periods, *, api_key, fetch=kosis.fetch):
                             "sido": SIDO[sido_key],
                             "size": size_name,
                             "occupation": str(raw.get("C3", "")).replace(prefix, ""),
-                            "occupation_name": raw.get("C3_NM"),
+                            "occupation_name": _name(raw),
                             "item": item_name,
                             "value": value,
                         })
@@ -136,7 +148,7 @@ def collect_industry(periods, *, api_key, fetch=kosis.fetch):
                             "sido": SIDO[sido_key],
                             "size": size_name,
                             "industry": str(raw.get("C3", "")).replace(INDUSTRY_PREFIX, ""),
-                            "industry_name": raw.get("C3_NM"),
+                            "industry_name": _name(raw),
                             "item": item_name,
                             "value": value,
                         })

@@ -172,3 +172,46 @@ def test_writes_nothing_when_sido_check_fails(tmp_path):
     with pytest.raises(checks.CheckFailed):
         collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
     assert not list(tmp_path.iterdir())
+
+
+# ---------------------------------------------------------------------------
+# R40 — run_halfyear 가 이름 겹침 검사를 실제로 부르는지. compare_names 를
+# 안 주면 조용히 건너뛴다(R18 이 이미 지적한 "배선 없는 죽은 검사" 실수를
+# 반복하지 않기 위해, 준 경우엔 반드시 불러야 한다).
+# ---------------------------------------------------------------------------
+
+def _halfyear_rows_with_names():
+    return [
+        {"period": "202601", "sido": "11", "size": "전규모",
+         "occupation": "02", "occupation_name": "경영·행정·사무직",
+         "item": "채용계획인원", "value": 100},
+    ]
+
+
+def test_run_halfyear_skips_name_overlap_check_when_not_given(tmp_path):
+    """compare_names 를 안 주면 검사를 건너뛴다 — est.py 만 단독으로 돌 때(비교 대상이
+    없을 때)도 run_halfyear 가 죽으면 안 된다."""
+    def collector(periods, api_key):
+        return _halfyear_rows_with_names()
+
+    summary = collect.run_halfyear("202601", out_dir=tmp_path, api_key="KEY", collector=collector)
+    assert summary["est"] == 1
+
+
+def test_run_halfyear_fails_when_compare_names_do_not_overlap(tmp_path):
+    def collector(periods, api_key):
+        return _halfyear_rows_with_names()
+
+    with pytest.raises(checks.CheckFailed):
+        collect.run_halfyear("202601", out_dir=tmp_path, api_key="KEY", collector=collector,
+                              compare_names={"완전히 다른 이름"})
+    assert not list(tmp_path.iterdir())  # 절반 갱신 금지 — 검사 실패 시 파일을 안 쓴다
+
+
+def test_run_halfyear_passes_when_compare_names_overlap(tmp_path):
+    def collector(periods, api_key):
+        return _halfyear_rows_with_names()
+
+    summary = collect.run_halfyear("202601", out_dir=tmp_path, api_key="KEY", collector=collector,
+                                    compare_names={"경영·행정·사무직", "다른 이름"})
+    assert summary["est"] == 1

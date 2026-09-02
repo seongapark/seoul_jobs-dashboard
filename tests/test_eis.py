@@ -89,6 +89,34 @@ def test_mobility_rejects_sido_outside_the_metro_area():
 
 
 # ---------------------------------------------------------------------------
+# R40 — normalize_name(): est(KOSIS)와 eis 두 출처의 이름 표기를 맞춘다.
+#
+# 컨트롤러가 KOSIS 를 직접 불러 확인(2026-09-02)한 실측 문자열을 그대로 쓴다 —
+# 코드포인트가 진짜여야 의미가 있다. KOSIS 는 코드 접두 + 한글 아래아(ㆍ,
+# U+318D) 를 쓰고, EIS 는 접두 없이 가운뎃점(·, U+00B7) 을 쓴다.
+# ---------------------------------------------------------------------------
+
+def test_normalize_name_unifies_kosis_and_eis_separators_and_strips_code_prefix():
+    kosis_name = "02 경영ㆍ행정ㆍ사무직"          # 실측: DT_118N_DEN062, C3_NM
+    eis_name = "경영·행정·사무직"                 # 실측: eis_insured_rows.json (_strip_prefix 통과 후)
+    assert eis.normalize_name(kosis_name) == eis.normalize_name(eis_name) == "경영·행정·사무직"
+
+
+def test_normalize_name_keeps_parenthetical_detail_intact():
+    text = "82 금속ㆍ재료 설치ㆍ정비ㆍ생산직 (판금ㆍ단조ㆍ주조ㆍ용접ㆍ도장 등)"
+    assert eis.normalize_name(text) == "금속·재료 설치·정비·생산직 (판금·단조·주조·용접·도장 등)"
+
+
+def test_normalize_name_leaves_names_without_a_numeric_code_prefix_alone():
+    """"전직종"처럼 코드 접두가 없는 이름에서 숫자 아닌 부분을 잘라내면 안 된다."""
+    assert eis.normalize_name("전직종") == "전직종"
+
+
+def test_normalize_name_handles_single_digit_major_category_code():
+    assert eis.normalize_name("9 농림어업직") == "농림어업직"
+
+
+# ---------------------------------------------------------------------------
 # R2b — SIGUNGU_NAME_TO_CODE 는 임포트 시 한 번만 만들어진다
 # ---------------------------------------------------------------------------
 

@@ -23,14 +23,16 @@ def test_collect_shapes_rows():
     # 제대로 훈련시키지 못한다 — 첫 행만 남기고 나머지를 버리는 회귀가 있어도
     # 통과해버린다. 그래서 전직종·대분류·중분류가 섞인 다중 행 payload 를 쓰고,
     # DT 가 "-" 인 행(결측)이 걸러지는지도 같이 본다.
+    # C3_NM 값은 R40 실측 그대로(2026-09-02, 컨트롤러가 KOSIS 를 직접 불러 확인) —
+    # 코드 접두("02 ")와 한글 아래아(ㆍ, U+318D) 구분자가 실제로 이렇게 온다.
     def fake_fetch(table, *, item, obj_l1, obj_l2, obj_l3, periods, recent, api_key, get=None):
         return [
             {"PRD_DE": "202601", "DT": "109,560", "C1": obj_l1, "C2": obj_l2,
-             "C3": "keco2026_", "C3_NM": "전체", "ITM_ID": item},       # 전직종
+             "C3": "keco2026_", "C3_NM": "전직종", "ITM_ID": item},       # 전직종
             {"PRD_DE": "202601", "DT": "31,049", "C1": obj_l1, "C2": obj_l2,
-             "C3": "keco2026_0", "C3_NM": "경영·행정·사무직", "ITM_ID": item},  # 0 대분류
+             "C3": "keco2026_0", "C3_NM": "0 경영ㆍ사무ㆍ금융ㆍ보험직", "ITM_ID": item},  # 0 대분류
             {"PRD_DE": "202601", "DT": "26,828", "C1": obj_l1, "C2": obj_l2,
-             "C3": "keco2026_02", "C3_NM": "금융·보험직", "ITM_ID": item},      # 02 중분류
+             "C3": "keco2026_02", "C3_NM": "02 경영ㆍ행정ㆍ사무직", "ITM_ID": item},      # 02 중분류
             {"PRD_DE": "202601", "DT": "-", "C1": obj_l1,
              "C2": obj_l2, "C3": "keco2026_99", "ITM_ID": item},     # 결측 -> 버려져야 함
             {"PRD_DE": "202601", "DT": "7", "C1": obj_l1, "C2": obj_l2,
@@ -50,8 +52,11 @@ def test_collect_shapes_rows():
     assert values == {"": 109560, "0": 31049, "02": 26828, "03": 7}
     assert all(r["period"] == "202601" for r in matches)
 
+    # 이름은 코드 접두가 빠지고 구분자가 · (U+00B7) 로 통일된 채 실려야 한다(R40).
     names = {r["occupation"]: r["occupation_name"] for r in matches}
-    assert names == {"": "전체", "0": "경영·행정·사무직", "02": "금융·보험직", "03": None}
+    assert names == {
+        "": "전직종", "0": "경영·사무·금융·보험직", "02": "경영·행정·사무직", "03": None,
+    }
 
 
 def test_sido_object_codes_map_to_the_administrative_standard_code_eis_uses():

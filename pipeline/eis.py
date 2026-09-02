@@ -104,6 +104,27 @@ def _strip_prefix(text: str) -> str:
     return re.sub(r"^\d{4}직종_", "", (text or "").strip())
 
 
+def normalize_name(text: str) -> str:
+    """직종·산업 이름을 est(KOSIS)·eis 두 출처가 같은 값으로 비교할 수 있게 만든다.
+
+    R40 실측(컨트롤러가 KOSIS 를 직접 불러 확인, 2026-09-02)으로 드러난
+    두 가지 차이를 없앤다 — 이걸 안 하면 두 출처의 이름이 하나도 안 겹쳐
+    "조용한 미조인"이 그대로 남는다(R33 이 없애려던 바로 그 문제):
+
+      - KOSIS 이름은 코드 접두가 붙는다(``"02 경영·행정·사무직"``, ``"9 농림어업직"``).
+        EIS 이름에는 접두가 없다.
+      - 구분자 문자가 다르다 — KOSIS 는 한글 아래아(ㆍ, U+318D)나 반각 카타카나
+        가운뎃점(･, U+FF65)을 쓰고, EIS 는 가운뎃점(·, U+00B7)을 쓴다. 화면에서는
+        거의 구별이 안 되지만 다른 코드포인트라 문자열 비교가 조용히 실패한다.
+
+    코드 접두가 없는 이름("전직종")은 숫자가 없으니 그대로 남는다.
+    """
+    text = (text or "").strip()
+    text = text.replace("ㆍ", "·").replace("･", "·")
+    text = re.sub(r"^\d+\s+", "", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def collect_vacancy(rows, cm) -> list[dict]:
     """(근무지역)시군구 축 유효구인구직 행을 화면용 행으로 편다."""
     out = []
@@ -113,8 +134,8 @@ def collect_vacancy(rows, cm) -> list[dict]:
             "period": period_code(row["마감년월"]),
             "sigungu": code,
             "center": cm.center_of(code),
-            "occupation": _strip_prefix(row.get("직종_중분류", "")),
-            "industry": (row.get("산업_대분류") or "").strip(),
+            "occupation": normalize_name(_strip_prefix(row.get("직종_중분류", ""))),
+            "industry": normalize_name(row.get("산업_대분류")),
             "vacancy": to_number(row.get("유효구인인원(전체)")),
             "seekers": to_number(_first(row, _SEEKERS_KEYS)),
         })
@@ -130,7 +151,7 @@ def collect_placement(rows, cm) -> list[dict]:
             "period": period_code(row["마감년월"]),
             "sigungu": code,
             "center": cm.center_of(code),
-            "occupation": _strip_prefix(row.get("직종_중분류", "")),
+            "occupation": normalize_name(_strip_prefix(row.get("직종_중분류", ""))),
             "placements": to_number(row.get("취업건수(월)")),
         })
     return out
@@ -145,8 +166,8 @@ def collect_insured(rows, cm) -> list[dict]:
             "period": period_code(row["마감년월"]),
             "sigungu": code,
             "center": cm.center_of(code),
-            "occupation": _strip_prefix(row.get("직종_중분류", "")),
-            "industry": (row.get("산업_대분류") or "").strip(),
+            "occupation": normalize_name(_strip_prefix(row.get("직종_중분류", ""))),
+            "industry": normalize_name(row.get("산업_대분류")),
             "insured": to_number(row.get("피보험자수(전체)")),
             "gained": to_number(row.get("취득자수(월)")),
             "lost": to_number(row.get("상실자수(월)")),
@@ -164,8 +185,8 @@ def collect_mobility(rows) -> list[dict]:
     return [{
         "period": period_code(row["마감년월"]),
         "sido": sido_code(row.get("(사업장)시도")),
-        "industry": (row.get("산업_대분류") or "").strip(),
-        "prev_industry": (row.get("산업(이전)_대분류") or "").strip(),
+        "industry": normalize_name(row.get("산업_대분류")),
+        "prev_industry": normalize_name(row.get("산업(이전)_대분류")),
         "movers": to_number(row.get("경력이동자수(월)")),
     } for row in rows]
 

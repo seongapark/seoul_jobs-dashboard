@@ -128,3 +128,18 @@ def check_series_months(rows, minimum: int = 2) -> None:
         if len(periods) < minimum:
             raise CheckFailed(
                 f"{sido}: 관측 월이 {len(periods)}개뿐이다 (최소 {minimum}개 필요)")
+
+
+# ---------------------------------------------------------------------------
+# R40 — 두 출처(est/eis)의 직종·산업 이름이 정규화(eis.normalize_name)를 거치고도
+# 하나도 안 겹치면, 분류 체계 자체가 갈렸다는 신호다. 카드가 조용히 비는 대신
+# 여기서 시끄럽게 실패한다 — 이 저장소의 원칙 그대로("조용히 틀리느니 시끄럽게
+# 실패한다").
+# ---------------------------------------------------------------------------
+
+def check_name_overlap(names_a, names_b) -> None:
+    """두 이름 집합의 교집합이 비면 실패한다."""
+    if not (set(names_a) & set(names_b)):
+        raise CheckFailed(
+            f"이름이 하나도 안 겹친다 — 분류 체계가 달라졌을 수 있다: "
+            f"{sorted(names_a)[:3]} vs {sorted(names_b)[:3]}")

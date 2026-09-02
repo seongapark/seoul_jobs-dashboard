@@ -203,13 +203,34 @@ def run_series(*, out_dir, fetchers, previous=None):
     return {name: len(rows) for name, rows in merged.items()}
 
 
-def run_halfyear(period, *, out_dir, api_key, collector=None):
+def _row_names(rows) -> set[str]:
+    """행에 실린 occupation_name/industry_name(있는 쪽)을 모은다 — None 은 뺀다.
+
+    est.collect() 는 occupation_name 을, collect_industry() 는 industry_name 을
+    싣는다(R33/R40) — run_halfyear 는 어느 collector 가 왔는지 모르므로 둘 다 본다.
+    """
+    names: set[str] = set()
+    for row in rows:
+        for key in ("occupation_name", "industry_name"):
+            name = row.get(key)
+            if name is not None:
+                names.add(name)
+    return names
+
+
+def run_halfyear(period, *, out_dir, api_key, collector=None, compare_names=None):
     from pipeline import est
 
     collector = collector or est.collect
     rows = collector([period], api_key=api_key)
     checks.check_est_seam(rows)
     checks.check_not_all_zero(rows, "value")
+
+    # R40 — 비교 대상 이름 집합이 주어졌을 때만 겹침을 검사한다. 안 주면
+    # 조용히 건너뛴다(R18 의 "배선 없는 죽은 검사" 재발 방지: 여기서
+    # 명시적으로 건너뛴다는 것을 보여 둔다).
+    if compare_names is not None:
+        checks.check_name_overlap(_row_names(rows), compare_names)
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

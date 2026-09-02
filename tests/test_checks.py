@@ -143,3 +143,18 @@ def test_era_relaxation_does_not_excuse_missing_non_incheon_region():
     with pytest.raises(checks.CheckFailed) as e:
         checks.check_regions(rows, collect._ExpectedCodes(expected))
     assert "11680" in str(e.value)
+
+
+# ---------------------------------------------------------------------------
+# R40 — 이름 겹침 검사. est(KOSIS)·eis 두 출처의 직종·산업 이름이 정규화를
+# 거치고도 하나도 안 겹치면, 분류 체계 자체가 갈렸다는 신호다 — 카드가 조용히
+# 비는 대신 수집을 시끄럽게 멈춘다.
+# ---------------------------------------------------------------------------
+
+def test_check_name_overlap_passes_when_names_overlap():
+    checks.check_name_overlap({"경영·행정·사무직", "제조업"}, {"경영·행정·사무직", "금융업"})
+
+
+def test_check_name_overlap_fails_when_nothing_overlaps():
+    with pytest.raises(checks.CheckFailed):
+        checks.check_name_overlap({"경영·행정·사무직"}, {"완전히 다른 이름"})
