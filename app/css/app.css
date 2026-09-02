@@ -13,13 +13,17 @@
 
 /* 지역/기준월 스위처 */
 .switcher { display: flex; gap: 8px; padding: 12px 16px 4px; }
-.switcher .sel {
+/* R30 — 목업은 div 기반 가짜 셀렉트였다. 실제 스위처는 네이티브 <select
+   class="sel"> 로 낸다(모바일 OS 피커·키보드·스크린리더가 공짜로 붙는다)
+   — 값은 그대로 두고 select.sel 도 걸리게 선택자만 넓힌다. */
+.switcher .sel, select.sel {
   flex: 1; min-width: 0; font-size: 13.5px; font-weight: 500; color: var(--text); background: var(--card);
   border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; display: flex; justify-content: space-between;
   align-items: center; gap: 6px; overflow: hidden;
 }
 .switcher .sel span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.switcher .sel::after { content: "\25BE"; color: var(--text-muted); font-size: 11px; flex: none; }
+/* select 는 OS 가 이미 자기 캐럿을 그리므로, 여기서 겹쳐 그리던 것만 끈다. */
+.switcher .sel:not(select)::after { content: "\25BE"; color: var(--text-muted); font-size: 11px; flex: none; }
 
 /* 카드 목록 */
 .cards { display: flex; flex-direction: column; gap: 10px; padding: 8px 16px 14px; }

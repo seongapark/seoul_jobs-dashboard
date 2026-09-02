@@ -3,6 +3,16 @@ export const num = (value) => value == null ? "—" : value.toLocaleString("ko-K
 // 화면 규칙 5 — 구인배수를 보여주는 카드에는 이 각주가 반드시 붙는다.
 export const RATIO_NOTE = "구인배수 &lt; 1 : 일자리 부족";
 
+const ESC_MAP = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+
+// R24 — 직종·산업·센터·시군구 이름은 데이터에서 그대로 와서 템플릿 문자열에
+// 꽂힌다. esc 는 그 값에만 건다 — RATIO_NOTE 처럼 이미 완성된 HTML(엔티티
+// 포함)을 다시 통과시키면 안 된다.
+export function esc(text) {
+  if (text == null) return "";
+  return String(text).replace(/[&<>"']/g, (ch) => ESC_MAP[ch]);
+}
+
 export function card({ title, badge, badgeClass = "badge--jo", body, notes = [] }) {
   const noteHtml = notes.length
     ? `<ul class="bul">${notes.map((n) => `<li>${n}</li>`).join("")}</ul>`
@@ -33,6 +43,44 @@ export function pairCard({ vacancy, seekers, ratio, placements }) {
     <span>구인배수 <b class="num">${ratio ?? "—"}</b></span>
     ${placements != null ? `<span>취업 <b class="num">${num(placements)}</b>건</span>` : ""}
   </div>`;
+}
+
+const BAR_VARIANT_CLASS = { jo: "", jh: "bar--jh", est: "bar--est" };
+
+// 가로 막대 랭킹(스펙 카드 6·10·12). 화면 규칙 4 — 값은 항상 막대에 직접
+// 단다(bar__val) — 초록(구인)이 배경 대비 2.74:1 이라 색만으로는 못 읽는다.
+export function bars({ items, variant = "jo" }) {
+  const variantClass = BAR_VARIANT_CLASS[variant] ?? "";
+  const max = Math.max(...items.map((it) => it.value), 0);
+  const rows = items.map((it) => {
+    // 최댓값을 100% 로 한 비율, 소수 첫째 자리. 최댓값이 0이면(전부 값 없음)
+    // 나눗셈을 하지 않고 그냥 0%로 둔다.
+    const pct = max > 0 ? Math.round((it.value / max) * 1000) / 10 : 0;
+    const classes = ["bar", variantClass, it.highlighted ? "bar--hi" : "", it.sub ? "bar--sub" : ""]
+      .filter(Boolean).join(" ");
+    const mult = it.mult != null ? `<span class="bar__mult">×${it.mult}</span>` : "";
+    return `<div class="${classes}">
+      <div class="bar__lab">${esc(it.label)}${mult}</div>
+      <div class="bar__val num">${num(it.value)}</div>
+      <div class="bar__track" style="width:${pct}%"></div>
+    </div>`;
+  }).join("");
+  return `<div class="bars">${rows}</div>`;
+}
+
+// 접히는 카드(스펙 카드 5·9·13·16). card() 와 인자 이름·badgeClass 기본값을
+// 맞춰 두 컴포넌트를 헷갈리지 않고 바꿔 쓸 수 있게 한다.
+export function collapseCard({ title, badge, badgeClass = "badge--jo", body }) {
+  return `<details class="card">
+    <summary>
+      <div class="sumhead">
+        <div class="sumname">${title}</div>
+        ${badge ? `<span class="badge ${badgeClass}">${badge}</span>` : ""}
+      </div>
+      <div class="caretrow"><span class="caret">자세히 ▾</span></div>
+    </summary>
+    <div class="detail">${body}</div>
+  </details>`;
 }
 
 const TREND_W = 320;

@@ -1,4 +1,4 @@
-import { card, pairCard, num, RATIO_NOTE } from "../components.js";
+import { card, pairCard, trend, num, RATIO_NOTE } from "../components.js";
 import { ratio, hasValue } from "../data.js";
 
 // 총괄 화면 — 스펙 §4.1. 시도 단위(R4)로 거른다: store.vacancySido/
@@ -8,12 +8,10 @@ import { ratio, hasValue } from "../data.js";
 // 화면 규칙 1 — 값이 없으면 카드째 감춘다. 전국 값 대체도, 빈칸도 없다.
 // 판단은 전부 data.js 의 hasValue() 하나로 한다(카드 감춤 규칙의 단일
 // 판단점) — 화면마다 각자 find()/조건문을 다시 짜지 않는다.
-// 추세 카드(스펙 §4.1 카드 2)는 24개월 시계열이 필요한데, 이 파이프라인은
-// 매번 최신 한 시점만 받아 쓰고 이력을 쌓지 않는다(pipeline/collect.py — 매
-// 수집이 data/*.json 을 그대로 덮어쓴다). 없는 이력을 지어내 그리면 화면
-// 규칙 1을 정면으로 어기므로, components.trend 는 구현·검증만 해 두고(R8)
-// 이 화면에는 아직 배선하지 않는다 — 목업도 이 카드 값을 "예시" 로 표시해
-// 두었다("인용하실 값이 아닙니다").
+// 추세(카드 2)·전년동월대비(카드 4)는 store.vacancySeries/insuredSeries
+// (Task 9b가 낸 마감년월 축 시계열, R19/R27)를 읽는다. data.load() 가 이
+// 파일들을 선택적으로 싣기 때문에(R31) 수집이 아직 없으면 undefined 이고,
+// 그 경우도 hasValue 가 카드를 감춘다 — 없는 이력을 지어내지 않는다.
 const period = (p) => p.replace(/(\d{4})(\d{2})/, "$1.$2");
 const half = (p) => `’${p.slice(2, 4)} ${p.slice(4) === "01" ? "상반기" : "하반기"}`;
 
@@ -36,6 +34,26 @@ export function render(store, selection = { sido: "11" }) {
     }
   }
 
+  // 카드 2 — 24개월 추세. store.vacancySeries 가 없거나 이 시도 행이 하나도
+  // 없으면 카드째 감춘다(hasValue). 값을 지어내 그리지 않는다.
+  if (hasValue(store.vacancySeries?.rows, bySido)) {
+    const seriesRows = store.vacancySeries.rows
+      .filter((r) => r.sido === selection.sido)
+      .sort((a, b) => a.period.localeCompare(b.period));
+    const labels = seriesRows.map((r) => period(r.period));
+    cards.push(card({
+      title: '<span class="pin">2</span>유효구인 · 유효구직 추세',
+      badge: `${labels[0]}~${labels[labels.length - 1]}`,
+      body: trend({
+        series: [
+          { name: "유효구인", values: seriesRows.map((r) => r.vacancy), color: "#1baf7a", unit: "명" },
+          { name: "유효구직", values: seriesRows.map((r) => r.seekers), color: "#2a78d6", unit: "건" },
+        ],
+        labels,
+      }),
+    }));
+  }
+
   if (hasValue(store.placementSido.rows, bySido)) {
     const pl = store.placementSido.rows.find((r) => r.sido === selection.sido);
     if (pl.placements != null) {
@@ -53,10 +71,27 @@ export function render(store, selection = { sido: "11" }) {
     if (ins.insured != null) {
       const net = (ins.gained ?? 0) - (ins.lost ?? 0);
       const netLabel = `${net > 0 ? "+" : ""}${num(net)}`;
+
+      // 전년동월대비(R32) — 직종 축 시계열이 없어 이번 판은 시도 단위
+      // 카드 4에만 붙인다. 같은 sido·12개월 전 같은 달 행이 있을 때만
+      // 붙이고, 없으면 그 줄만 뺀다(전월대비는 요구에서 명시적으로 뺐다).
+      const priorPeriod = String(Number(store.insuredSido.period.slice(0, 4)) - 1)
+        + store.insuredSido.period.slice(4);
+      const priorRow = store.insuredSeries?.rows?.find((r) =>
+        r.sido === selection.sido && r.period === priorPeriod);
+      let deltaRow = "";
+      if (priorRow) {
+        const delta = ins.insured - priorRow.insured;
+        const cls = delta >= 0 ? "is-up" : "is-down";
+        const arrow = delta >= 0 ? "▲" : "▼";
+        deltaRow = `<div class="deltarow"><span class="card__delta ${cls}">${arrow} ${num(Math.abs(delta))}<small>전년동월대비</small></span></div>`;
+      }
+
       cards.push(card({
         title: '<span class="pin">4</span>고용보험 피보험자',
         badge: period(store.insuredSido.period),
         body: `<div class="card__value num">${num(ins.insured)}<small>명</small></div>
+          ${deltaRow}
           <dl class="trio">
             <div><dt>취득</dt><dd class="num">${num(ins.gained)}</dd></div>
             <div><dt>상실</dt><dd class="num">${num(ins.lost)}</dd></div>

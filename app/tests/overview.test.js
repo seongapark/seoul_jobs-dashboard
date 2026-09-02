@@ -20,6 +20,14 @@ const store = {
   placementSido: { period: "202607", rows: [{ sido: "11", placements: 25233 }] },
   insuredSido: { period: "202607", rows: [{ sido: "11", insured: 4698520, gained: 193339, lost: 192131 }] },
   est: { period: "202601", rows: [{ sido: "11", size: "전규모", occupation: "", item: "채용계획인원", value: 109560 }] },
+  // R31 — Task 9b 가 낸 마감년월 축 시계열(시도만, occupation 축 없음).
+  vacancySeries: { rows: [
+    { period: "202605", sido: "11", vacancy: 28000, seekers: 260000 },
+    { period: "202606", sido: "11", vacancy: 28500, seekers: 264000 },
+    { period: "202607", sido: "11", vacancy: 29196, seekers: 268616 },
+  ] },
+  // 전년동월대비(R32)가 찾는 12개월 전(202507) 행.
+  insuredSeries: { rows: [{ period: "202507", sido: "11", insured: 4600000 }] },
 };
 
 let failed = 0;
@@ -73,6 +81,50 @@ if (htmlNoPlan.includes("채용계획인원")) {
 } else {
   console.log("ok 채용계획인원 값이 없으면 카드가 통째로 빠진다");
 }
+
+// 카드 2(추세) — store.vacancySeries 가 있으면 나오고, 라벨은 오름차순,
+// 값은 시계열의 실제 수치를 그대로 쓴다.
+has(html, "유효구인 · 유효구직 추세", "시계열이 있으면 추세 카드가 나온다");
+has(html, "2026.05~2026.07", "추세 카드 배지는 시계열 범위다");
+// trend() 는 끝점만 라벨을 붙인다(components.js 계약) — 계열이 실제로
+// 배선됐는지는 범례의 이름(unit) 문자열로 구분한다(pairCard 의 "유효구인인원"
+// 표기와 겹치지 않는다).
+has(html, "유효구인(명)", "추세 카드에 유효구인 계열이 배선된다");
+has(html, "유효구직(건)", "추세 카드에 유효구직 계열이 배선된다");
+
+// 시계열 파일 자체가 없으면(R31 — 아직 수집이 안 쌓였을 수 있다) 추세
+// 카드는 통째로 사라지고, 다른 카드는 죽지 않는다.
+const htmlNoVacancySeries = render({ ...store, vacancySeries: undefined }, { sido: "11" });
+if (htmlNoVacancySeries.includes("추세")) {
+  failed++;
+  console.error("FAIL 시계열이 없으면 추세 카드가 통째로 빠진다");
+} else {
+  console.log("ok 시계열이 없으면 추세 카드가 통째로 빠진다");
+}
+has(htmlNoVacancySeries, "29,196", "추세 카드가 없어도 다른 카드는 그대로 남는다");
+
+// 이 시도 행이 하나도 없어도(다른 시도만 있는 시계열) 마찬가지로 감춘다.
+const htmlOtherSidoSeries = render(
+  { ...store, vacancySeries: { rows: [{ period: "202607", sido: "41", vacancy: 1, seekers: 1 }] } },
+  { sido: "11" });
+if (htmlOtherSidoSeries.includes("추세")) {
+  failed++;
+  console.error("FAIL 이 시도의 시계열 행이 없으면 추세 카드가 빠진다");
+} else {
+  console.log("ok 이 시도의 시계열 행이 없으면 추세 카드가 빠진다");
+}
+
+// 카드 4 전년동월대비(R32) — insuredSeries 에 12개월 전 같은 달이 있으면 붙는다.
+has(html, "card__delta", "전년동월대비가 있으면 .card__delta 가 붙는다");
+has(html, "is-up", "이번 값이 더 크면 is-up");
+has(html, "98,520", "증감 절댓값이 표시된다");
+has(html, "전년동월대비", "전년동월대비 라벨이 붙는다");
+
+// insuredSeries 자체가 없거나 12개월 전 행이 없으면 그 줄만 빠지고 카드는 남는다.
+const htmlNoInsuredSeries = render({ ...store, insuredSeries: undefined }, { sido: "11" });
+hasNot(htmlNoInsuredSeries, "card__delta", "전년동월대비 행이 없으면 그 줄만 빠진다");
+has(htmlNoInsuredSeries, "고용보험 피보험자", "전년동월대비가 없어도 카드 자체는 남는다");
+has(htmlNoInsuredSeries, "4,698,520", "전년동월대비가 없어도 피보험자 값은 그대로 나온다");
 
 // R8 — components.trend: 두 계열을 한 축에 그리는 최소 인라인 SVG.
 // 폴리라인 2개 + 끝점 원 2개 + 끝값 라벨, 범례는 카드 본문에 둔다. 두 y축은 없다.
