@@ -47,18 +47,29 @@ FIELD_OF = {"vacancy": "vacancy", "placement": "placements",
             "insured": "insured", "mobility": "movers",
             "vacancy_industry": "vacancy", "insured_industry": "insured"}
 
-# R18 — 데이터셋별로 검산할 (필드, mode) 목록. mode 의 비대칭은 checks.py
-# check_against_total 의 docstring 을 그대로 따른다: 구인/취업/피보험 같은
-# "건 하나 = 지역 하나" 측정값은 equality, 유효구직건수처럼 "건 하나가
-# 지역을 여럿 낼 수 있는" 측정값만 at_least 다.
+# R18 — 데이터셋별로 검산할 (필드, mode) 목록.
+#
+# R46 (Task 15a 실측, 2026-09-02) — 전부 "at_most" 다. 애초 설계는 구인/취업/
+# 피보험을 equality, 유효구직을 at_least 로 놓았는데 **둘 다 실데이터로
+# 반증됐다**: 그리드 총계 행은 전국 총계이고 `지역무관`·시도 잔여 멤버까지
+# 포함하는데 우리는 수도권만 받으므로 equality 는 구조적으로 영원히 실패하고,
+# at_least 의 방향(시군구 합 > 총계)도 실측과 반대였다(서울 시군구 합 107,164
+# < 시도 총계 355,893, 차이는 `서울특별시` 잔여 멤버 한 행). 근거 전문은
+# checks.check_against_total 위 주석 참고.
+#
+# 검사를 무른 것이 아니다 — "수도권 분해합 ≤ 전국 총계" 는 우리가 받는 것과
+# 총계 행 사이의 유일하게 참인 관계이고, 합이 부풀어 오르는 실패(페이지 중복
+# 이중계상·자릿수 파싱 깨짐 — R47 이 잡은 바로 그런 것)를 여전히 잡는다.
+# 반대 방향(누락)은 시군구 70개 완전성 검사가 잡으므로 두 검사가 양방향을
+# 함께 덮는다. totals=None 이 실패라는 것도 그대로다(아래 run_monthly).
 MEASURE_MODES: dict[str, tuple[tuple[str, str], ...]] = {
-    "vacancy": (("vacancy", "equality"), ("seekers", "at_least")),
-    "placement": (("placements", "equality"),),
-    "insured": (("insured", "equality"),),
+    "vacancy": (("vacancy", "at_most"), ("seekers", "at_most")),
+    "placement": (("placements", "at_most"),),
+    "insured": (("insured", "at_most"),),
     # Task 15a — 산업 축은 같은 측정값을 다른 분해축으로 받은 것이라 검산 규칙이
     # 짝 데이터셋과 같다. 축이 달라도 총계는 하나이므로 여기서 갈라질 이유가 없다.
-    "vacancy_industry": (("vacancy", "equality"), ("seekers", "at_least")),
-    "insured_industry": (("insured", "equality"),),
+    "vacancy_industry": (("vacancy", "at_most"), ("seekers", "at_most")),
+    "insured_industry": (("insured", "at_most"),),
 }
 
 _SIDO_SUFFIX = "_sido"

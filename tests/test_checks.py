@@ -158,3 +158,25 @@ def test_check_name_overlap_passes_when_names_overlap():
 def test_check_name_overlap_fails_when_nothing_overlaps():
     with pytest.raises(checks.CheckFailed):
         checks.check_name_overlap({"경영·행정·사무직"}, {"완전히 다른 이름"})
+
+
+# --- R46: at_most — 우리가 받는 부분집합과 전국 총계 사이의 유일하게 참인 관계 ---
+
+def test_check_against_total_at_most_passes_when_under():
+    rows = [{"vacancy": 10}, {"vacancy": 20}]
+    total = {"vacancy": 1000}          # 전국 총계 (지역무관·시도 잔여 포함)
+    checks.check_against_total(rows, total, field="vacancy", mode="at_most")
+
+
+def test_check_against_total_at_most_passes_when_equal():
+    rows = [{"vacancy": 10}, {"vacancy": 20}]
+    total = {"vacancy": 30}
+    checks.check_against_total(rows, total, field="vacancy", mode="at_most")
+
+
+def test_check_against_total_at_most_fails_when_over():
+    """이중계상·자릿수 파싱 깨짐을 잡는 방향."""
+    rows = [{"vacancy": 10}, {"vacancy": 20}]
+    total = {"vacancy": 29}
+    with pytest.raises(checks.CheckFailed):
+        checks.check_against_total(rows, total, field="vacancy", mode="at_most")

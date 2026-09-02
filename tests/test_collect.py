@@ -93,23 +93,31 @@ def test_missing_region_still_fails_when_neither_era_present(tmp_path):
 # run_monthly 가 시군구 검사 대상 데이터셋(vacancy/placement/insured)마다
 # 그 총계를 실제로 검산한다.
 
-def test_writes_nothing_when_total_mismatches(tmp_path):
-    """유효구인인원은 equality — 그리드 총계가 시군구 합과 다르면 아무것도 안 쓴다."""
-    wrong_totals = {"vacancy": 10 * len(_REALISTIC_CODES) + 1, "seekers": 100 * len(_REALISTIC_CODES)}
-    fetchers = {"vacancy": lambda period: Fetched(_full_rows(period), wrong_totals)}
+def test_writes_nothing_when_metro_parts_exceed_the_national_total(tmp_path):
+    """R46 — 수도권 분해합이 전국 총계를 넘으면 실패한다.
+
+    이 방향이 잡아야 하는 실패는 페이지 중복으로 행이 이중계상되거나 자릿수
+    파싱이 깨지는 것 — R47 이 실제로 잡은 바로 그런 종류다."""
+    too_small_totals = {"vacancy": 10 * len(_REALISTIC_CODES) - 1,
+                        "seekers": 100 * len(_REALISTIC_CODES)}
+    fetchers = {"vacancy": lambda period: Fetched(_full_rows(period), too_small_totals)}
     with pytest.raises(checks.CheckFailed):
         collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
     assert not list(tmp_path.iterdir())
 
 
-def test_writes_nothing_when_seekers_total_undershoots(tmp_path):
-    """유효구직건수는 at_least — 시군구 합이 총계에 못 미치면(행 소실) 실패."""
-    too_high_seekers_total = {"vacancy": 10 * len(_REALISTIC_CODES),
-                               "seekers": 100 * len(_REALISTIC_CODES) + 1}
-    fetchers = {"vacancy": lambda period: Fetched(_full_rows(period), too_high_seekers_total)}
-    with pytest.raises(checks.CheckFailed):
-        collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
-    assert not list(tmp_path.iterdir())
+def test_parts_below_the_total_pass_because_the_grid_total_is_nationwide(tmp_path):
+    """R46 — 분해합이 총계보다 작은 것은 **정상**이다.
+
+    그리드 총계 행은 전국이고 `지역무관`·시도 잔여 멤버까지 포함하는데 우리는
+    수도권만 받는다(실측). 옛 equality/at_least 계약은 이 경우를 실패로 봤고,
+    그래서 실데이터로는 영원히 통과할 수 없었다. 누락 방향은 여기가 아니라
+    시군구 70개 완전성 검사가 잡는다 — 두 검사가 양방향을 함께 덮는다."""
+    nationwide_totals = {"vacancy": 10 * len(_REALISTIC_CODES) * 5,
+                         "seekers": 100 * len(_REALISTIC_CODES) * 5}
+    fetchers = {"vacancy": lambda period: Fetched(_full_rows(period), nationwide_totals)}
+    summary = collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
+    assert summary["vacancy"] == len(_REALISTIC_CODES)
 
 
 def test_writes_nothing_when_total_is_missing_for_a_checked_dataset(tmp_path):
