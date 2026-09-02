@@ -1,5 +1,5 @@
 import { load, parseSelection, selectionHash, optionsFor, reconcileForSido,
-         switcherRows, switcherSido, staleNotice } from "./data.js";
+         resolveAxis, switcherRows, switcherSido, staleNotice } from "./data.js";
 import { esc, AXISLINE_HTML } from "./components.js";
 import { SIDO_OF_SCOPE } from "./tilemap.js";
 
@@ -18,10 +18,10 @@ function selectHtml({ id, label, options, value }) {
   return `<select class="sel" id="${id}" aria-label="${esc(label)}">${optionTags}</select>`;
 }
 
-// 라우트마다 지역 옆에 붙는 축 스위처. 총괄·센터별은 지역뿐이라 여기 없다.
-// 한 표에 모아 두면 "그 축을 어느 파일에서 뽑는가"(data.switcherRows)와
-// "select 를 어느 id 로 내는가"가 한 자리에서 짝을 이룬다 — C1 은 정확히 그
-// 짝이 두 곳으로 흩어져 어긋난 결함이었다.
+// 라우트마다 지역 옆에 붙는 축 스위처. 총괄만 지역뿐이라 여기 없다. 한 표에
+// 모아 두면 "그 축을 어느 파일에서 뽑는가"(data.switcherRows)와 "select 를
+// 어느 id 로 내는가"가 한 자리에서 짝을 이룬다 — C1 은 정확히 그 짝이 두
+// 곳으로 흩어져 어긋난 결함이었다.
 // I5 — 센터별에도 직종 스위처가 붙는다(스펙 §4.4 의 연동 첫째 층: 스위처 →
 // 지도 색·15번 막대 값). 여기 없으면 그 라우트의 selection.occupation 은
 // 영원히 undefined 라 화면이 연동을 구현해도 켤 방법이 없다. 산업은 붙이지
@@ -34,7 +34,7 @@ const SWITCHER_AXIS = {
 };
 
 // 라우트별 스위처(R30, 브리프 표): 총괄=지역, 직종별=지역·직종,
-// 산업별=지역·산업, 센터별=지역(축 선택은 Task 14 몫). 네이티브 <select> 를
+// 산업별=지역·산업, 센터별=지역·직종(I5, 스펙 §4.4). 네이티브 <select> 를
 // 써서 모바일 OS 피커·키보드·스크린리더를 공짜로 얻는다.
 function renderSwitcher(route, store, selection) {
   const selects = [selectHtml({
@@ -134,8 +134,22 @@ async function main() {
 
   wireNavDelegation();
 
+  // I6 — 주소에서 읽은 선택을 화면이 실제로 그릴 선택으로 확정한다. 이 한
+  // 줄이 없으면 첫 진입에서 select 가 표시하는 값과 selection 이 어긋나
+  // (브라우저는 첫 옵션을 보여주는데 selection 은 undefined) 카드가 전부
+  // 감춰지고, 보이는 값을 다시 골라도 change 가 안 나 아무 일도 안 일어난다.
+  // 지도 칩으로 지역을 바꿔 선택 직종이 새 목록에 없어진 경우도 같은 길로
+  // 정리된다 — 판단은 data.resolveAxis 한 곳이다.
+  const resolveSelection = (selection) => {
+    const axis = SWITCHER_AXIS[selection.route];
+    if (!axis) return selection;
+    const value = resolveAxis(switcherRows(store, axis.field), selection, axis.field,
+                             switcherSido(selection, SIDO_OF_SCOPE));
+    return { ...selection, [axis.field]: value };
+  };
+
   const render = async () => {
-    const selection = parseSelection(location.hash);
+    const selection = resolveSelection(parseSelection(location.hash));
     document.querySelectorAll(".segment").forEach((el) =>
       el.classList.toggle("segment--active", el.dataset.route === selection.route));
     const module = await import(`./screens/${selection.route}.js`);

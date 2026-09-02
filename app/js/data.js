@@ -272,13 +272,29 @@ export function switcherSido(selection, sidoOfScope) {
   return sidoOfScope[selection.scope] ?? "";
 }
 
-// 시도를 바꾸면 optionsFor 의 목록이 통째로 달라진다. 지금 선택이 새
-// 목록에도 있으면 그대로 두고, 없으면(다른 시도에만 있던 값) 조용히 빈
-// 화면이 되는 대신 새 목록의 첫 값으로 떨어뜨린다(목록이 비어 있으면
-// undefined — parseSelection 이 기대하는 "없음"과 같은 모양). selection
-// 에 그 field 가 애초에 없으면(이 라우트에 그 축이 없음) 손대지 않는다.
+// I6 — "지금 선택이 이 목록에서 성립하는가"를 판단하는 한 자리.
+//
+// 지금 선택이 목록에 있으면 그대로 두고, 없으면(다른 시도에만 있던 값이거나
+// **첫 진입이라 아예 없거나**) 목록의 첫 값으로 떨어뜨린다. 목록이 비어 있으면
+// undefined — parseSelection 이 기대하는 "없음"과 같은 모양이고, 없는 선택을
+// 지어내지 않는다.
+//
+// 첫 진입을 함께 다루는 것이 이 함수의 핵심이다. parseSelection 은
+// occupation/industry 를 의도적으로 undefined 로 두는데(빈 문자열은 est 의
+// 실제 값 ""과 오매칭된다) 그 뒤에 아무도 기본값을 채우지 않아, `#/occupation`
+// 첫 진입이 이런 먹통이 됐다: 브라우저는 첫 옵션을 표시하는데 selection 은
+// undefined 라 카드가 다 감춰지고, 사용자가 **화면에 보이는 그 직종을 다시
+// 골라도** change 이벤트가 안 나서 아무 일도 일어나지 않는다. 상담 창구에서
+// 가장 먼저 겪을 장면이다.
+export function resolveAxis(rows, selection, field, sido) {
+  const options = optionsFor(rows ?? [], field, sido);
+  return options.includes(selection[field]) ? selection[field] : options[0];
+}
+
+// 시도를 바꿀 때 쓰는 짝. resolveAxis 와 판단은 같고, "이 라우트에 그 축이
+// 애초에 없으면(선택이 null) 손대지 않는다"는 규칙만 앞에 둔다 — 이 함수는
+// 라우트를 모른 채 occupation·industry 둘 다에 대해 불리기 때문이다.
 export function reconcileForSido(rows, selection, field, nextSido) {
   if (selection[field] == null) return selection[field];
-  const options = optionsFor(rows, field, nextSido);
-  return options.includes(selection[field]) ? selection[field] : options[0];
+  return resolveAxis(rows, selection, field, nextSido);
 }

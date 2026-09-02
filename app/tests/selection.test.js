@@ -4,7 +4,8 @@
 // — app.js 는 top-level 에서 main()이 곧장 돌며 document/fetch 를 찾으므로
 // 노드에서 직접 import 해 테스트할 수 없다. 그래서 이 로직은 data.js 에
 // 두고(순수 함수), app.js 는 그것을 불러 쓰기만 한다.
-import { parseSelection, selectionHash, optionsFor, reconcileForSido, switcherRows, switcherSido } from "../js/data.js";
+import { parseSelection, selectionHash, optionsFor, reconcileForSido, resolveAxis,
+         switcherRows, switcherSido } from "../js/data.js";
 
 let failed = 0;
 const eq = (got, want, label) => {
@@ -123,5 +124,28 @@ eq(reconcileForSido(vacancyRows, { occupation: "생산직" }, "occupation", "28"
    "새 목록이 아예 비어 있으면 undefined 로 떨어진다");
 eq(reconcileForSido(vacancyRows, {}, "occupation", "41"), undefined,
    "이 라우트에 애초에 occupation 선택이 없으면 손대지 않는다");
+
+// --- resolveAxis (I6 — 첫 진입에서 select 표시와 실제 선택이 어긋난다) -------
+// parseSelection 은 occupation/industry 를 의도적으로 undefined 로 둔다(빈
+// 문자열은 est 의 실제 값 ""과 오매칭된다). 그런데 그 뒤에 아무도 기본값을
+// 채우지 않아 `#/occupation` 첫 진입이 (a) 브라우저는 첫 옵션을 표시하고
+// (b) selection.occupation 은 undefined 라 카드 7·8·9 가 다 감춰지고
+// (c) 사용자가 화면에 보이는 그 직종을 다시 골라도 change 가 안 나서 아무
+// 일도 안 일어나는 — 상담 창구에서 가장 먼저 겪을 먹통 상태가 됐다.
+eq(resolveAxis(vacancyRows, {}, "occupation", "11"), "경영·행정·사무직",
+   "선택이 없으면 목록의 첫 값으로 떨어뜨린다(첫 진입)");
+eq(resolveAxis(vacancyRows, { occupation: "생산직" }, "occupation", "11"), "생산직",
+   "이미 목록에 있는 선택은 그대로 둔다");
+eq(resolveAxis(vacancyRows, { occupation: "생산직" }, "occupation", "41"), "판매직",
+   "목록에 없는 선택은 그 목록의 첫 값으로 떨어진다(지도 칩으로 지역을 바꾼 경우)");
+eq(resolveAxis(vacancyRows, {}, "occupation", "28"), undefined,
+   "목록이 비면 undefined — 없는 선택을 지어내지 않는다");
+eq(resolveAxis(undefined, {}, "industry", "11"), undefined,
+   "선택 파일이 아직 없어도(rows undefined) 크래시 없이 undefined");
+// reconcileForSido 는 이 함수를 그대로 쓰되 "선택이 애초에 없으면 손대지
+// 않는다"는 자기 규칙만 앞에 둔다 — 두 규칙이 한 몸으로 유지된다.
+eq(reconcileForSido(vacancyRows, { occupation: "생산직" }, "occupation", "41"),
+   resolveAxis(vacancyRows, { occupation: "생산직" }, "occupation", "41"),
+   "선택이 있을 때 두 함수의 판단이 같다");
 
 process.exit(failed ? 1 : 0);
