@@ -4,7 +4,7 @@
 // — app.js 는 top-level 에서 main()이 곧장 돌며 document/fetch 를 찾으므로
 // 노드에서 직접 import 해 테스트할 수 없다. 그래서 이 로직은 data.js 에
 // 두고(순수 함수), app.js 는 그것을 불러 쓰기만 한다.
-import { parseSelection, selectionHash, optionsFor, reconcileForSido } from "../js/data.js";
+import { parseSelection, selectionHash, optionsFor, reconcileForSido, switcherRows } from "../js/data.js";
 
 let failed = 0;
 const eq = (got, want, label) => {
@@ -58,18 +58,50 @@ eq(roundTripped.scope, "서울", "data-nav 문자열이 scope 를 왕복시킨�
 eq(roundTripped.sigungu, "11110", "data-nav 문자열이 sigungu 를 왕복시킨다");
 
 // --- optionsFor/reconcileForSido (R41 — 스위처 선택지는 지역으로 걸러야 한다) ---
+//
+// C1 — 픽스처를 **실제 두 파일 모양으로** 가른다. 직종 축 그리드
+// (vacancy.json)와 산업 축 그리드(vacancy_industry.json)는 EIS 에서 서로 다른
+// 레이아웃으로 따로 받는 별개의 파일이고, eis.collect_vacancy 는 그 그리드에
+// 없는 축을 빈 문자열로 채운다 — 그래서 **한 행이 occupation 과 industry 를
+// 함께 갖는 일은 실데이터에 없다.** 예전 픽스처가 둘을 한 행에 담는 바람에
+// "산업 스위처가 직종 축 파일에서 선택지를 뽑아 목록이 영구히 빈다"는 결함
+// (C1)이 테스트를 그냥 통과했다.
 const vacancyRows = [
-  { sigungu: "11110", occupation: "경영·행정·사무직", industry: "제조업" },
-  { sigungu: "11140", occupation: "생산직", industry: "건설업" },
-  { sigungu: "41111", occupation: "판매직", industry: "도소매업" },
+  { sigungu: "11110", occupation: "경영·행정·사무직", industry: "" },
+  { sigungu: "11140", occupation: "생산직", industry: "" },
+  { sigungu: "41111", occupation: "판매직", industry: "" },
   { sigungu: "41135", occupation: "", industry: "" }, // 빈 문자열은 est 전직종 합계 값 — 선택지에서 뺀다
+];
+const vacancyIndustryRows = [
+  { sigungu: "11110", occupation: "", industry: "제조업" },
+  { sigungu: "11140", occupation: "", industry: "건설업" },
+  { sigungu: "41111", occupation: "", industry: "도소매업" },
+  { sigungu: "41135", occupation: "", industry: "" },
 ];
 
 eq(optionsFor(vacancyRows, "occupation", "11"), ["경영·행정·사무직", "생산직"],
    "서울(11)로 거르면 서울 시군구 행의 occupation 만, 가나다순");
 eq(optionsFor(vacancyRows, "occupation", "41"), ["판매직"], "경기(41)로 거르면 경기 행만 남는다");
-eq(optionsFor(vacancyRows, "industry", "41"), ["도소매업"], "industry 축도 같은 방식으로 거른다");
+eq(optionsFor(vacancyIndustryRows, "industry", "41"), ["도소매업"], "industry 축도 같은 방식으로 거른다");
 eq(optionsFor(vacancyRows, "occupation", "28"), [], "행이 없는 시도는 빈 목록(에러 없이)");
+
+// C1 회귀 못 — 직종 축 파일에서 산업 선택지를 뽑으면 **어느 시도에서도** 빈다.
+eq(optionsFor(vacancyRows, "industry", "11"), [],
+   "직종 축 파일(vacancy)에는 산업 값이 없다 — 거기서 뽑으면 목록이 영구히 빈다(C1)");
+eq(optionsFor(vacancyIndustryRows, "occupation", "11"), [],
+   "산업 축 파일에는 직종 값이 없다 — 축과 파일은 짝이 맞아야 한다");
+
+// --- switcherRows (C1 — 축마다 어느 파일을 읽는가) ---------------------------
+const storeWithIndustry = {
+  vacancy: { rows: vacancyRows },
+  vacancyIndustry: { rows: vacancyIndustryRows },
+};
+eq(switcherRows(storeWithIndustry, "occupation"), vacancyRows, "직종 스위처는 직종 축 파일을 읽는다");
+eq(switcherRows(storeWithIndustry, "industry"), vacancyIndustryRows, "산업 스위처는 산업 축 파일을 읽는다");
+eq(switcherRows({ vacancy: { rows: vacancyRows } }, "industry"), undefined,
+   "산업 축 파일이 없으면 undefined — 부르는 쪽이 select 자체를 안 내도록");
+eq(optionsFor(switcherRows(storeWithIndustry, "industry"), "industry", "11"), ["건설업", "제조업"],
+   "스위처 배선을 통째로 이어 보면 산업 목록이 실제로 채워진다");
 
 eq(reconcileForSido(vacancyRows, { occupation: "생산직" }, "occupation", "11"), "생산직",
    "새 시도 목록에도 있으면 선택을 그대로 유지한다");

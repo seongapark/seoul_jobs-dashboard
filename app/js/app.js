@@ -1,4 +1,4 @@
-import { load, parseSelection, selectionHash, optionsFor, reconcileForSido } from "./data.js";
+import { load, parseSelection, selectionHash, optionsFor, reconcileForSido, switcherRows } from "./data.js";
 import { esc, AXISLINE_HTML } from "./components.js";
 
 // 지역 선택지는 서울·경기·인천 셋으로 고정한다(R30) — 그 밖의 시도는 이
@@ -16,6 +16,15 @@ function selectHtml({ id, label, options, value }) {
   return `<select class="sel" id="${id}" aria-label="${esc(label)}">${optionTags}</select>`;
 }
 
+// 라우트마다 지역 옆에 붙는 축 스위처. 총괄·센터별은 지역뿐이라 여기 없다.
+// 한 표에 모아 두면 "그 축을 어느 파일에서 뽑는가"(data.switcherRows)와
+// "select 를 어느 id 로 내는가"가 한 자리에서 짝을 이룬다 — C1 은 정확히 그
+// 짝이 두 곳으로 흩어져 어긋난 결함이었다.
+const SWITCHER_AXIS = {
+  occupation: { field: "occupation", id: "selOccupation", label: "직종 선택" },
+  industry: { field: "industry", id: "selIndustry", label: "산업 선택" },
+};
+
 // 라우트별 스위처(R30, 브리프 표): 총괄=지역, 직종별=지역·직종,
 // 산업별=지역·산업, 센터별=지역(축 선택은 Task 14 몫). 네이티브 <select> 를
 // 써서 모바일 OS 피커·키보드·스크린리더를 공짜로 얻는다.
@@ -27,13 +36,18 @@ function renderSwitcher(route, store, selection) {
   // R41(리뷰 지적) — 지역으로 걸러야 한다. optionsFor 가 sigungu 앞 두
   // 자리(행정표준코드 시도)로 거른다 — 안 거르면 데이터가 없는 (시도,직종)
   // 조합을 고를 수 있어 카드 감춤 규칙이 전부 걸려 화면이 통째로 빈다.
-  if (route === "occupation") {
-    const options = optionsFor(store.vacancy.rows, "occupation", selection.sido).map((v) => ({ value: v, label: v }));
-    selects.push(selectHtml({ id: "selOccupation", label: "직종 선택", options, value: selection.occupation }));
-  }
-  if (route === "industry") {
-    const options = optionsFor(store.vacancy.rows, "industry", selection.sido).map((v) => ({ value: v, label: v }));
-    selects.push(selectHtml({ id: "selIndustry", label: "산업 선택", options, value: selection.industry }));
+  //
+  // C1 — 선택지는 **그 축을 실제로 담은 파일**에서 뽑는다(data.switcherRows).
+  // 산업 선택지를 직종 축 파일에서 뽑으면 목록이 영구히 빈다.
+  // 선택지가 하나도 없으면(산업 축 파일이 아직 없거나 이 시도에 행이 없다)
+  // select 자체를 내지 않는다 — 옵션 없는 select 는 고장으로 읽힌다.
+  const axis = SWITCHER_AXIS[route];
+  if (axis) {
+    const options = optionsFor(switcherRows(store, axis.field) ?? [], axis.field, selection.sido)
+      .map((v) => ({ value: v, label: v }));
+    if (options.length) {
+      selects.push(selectHtml({ id: axis.id, label: axis.label, options, value: selection[axis.field] }));
+    }
   }
 
   return `<div class="switcher">${selects.join("")}</div>`;
@@ -49,12 +63,15 @@ function wireSwitcher(selection, store) {
     // R41 — 시도가 바뀌면 직종/산업 선택지가 통째로 달라진다.
     // reconcileForSido(순수 함수, data.js)가 지금 선택이 새 목록에도
     // 있으면 유지하고, 없으면 새 목록의 첫 값으로 떨어뜨린다.
+    // C1 — 축마다 자기 파일에서 목록을 다시 만든다(renderSwitcher 와 같은
+    // switcherRows). 여기서만 store.vacancy 를 쓰면 시도를 바꾼 순간 산업
+    // 선택이 "새 목록에 없다"고 판정돼 undefined 로 떨어진다.
     const nextSido = sidoEl.value;
     location.hash = selectionHash({
       ...selection,
       sido: nextSido,
-      occupation: reconcileForSido(store.vacancy.rows, selection, "occupation", nextSido),
-      industry: reconcileForSido(store.vacancy.rows, selection, "industry", nextSido),
+      occupation: reconcileForSido(switcherRows(store, "occupation") ?? [], selection, "occupation", nextSido),
+      industry: reconcileForSido(switcherRows(store, "industry") ?? [], selection, "industry", nextSido),
     });
   });
 

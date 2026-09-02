@@ -202,6 +202,20 @@ export function optionsFor(rows, field, sido) {
   return [...values].sort((a, b) => a.localeCompare(b, "ko"));
 }
 
+// C1 — **스위처의 축과 그것을 담은 파일은 짝이 맞아야 한다.** 직종 축 그리드
+// (vacancy.json)와 산업 축 그리드(vacancy_industry.json)는 EIS 에서 레이아웃을
+// 달리해 따로 받는 별개의 파일이고, eis.collect_vacancy 는 그 그리드에 없는
+// 축을 빈 문자열로 채운다. 그래서 산업 선택지를 store.vacancy 에서 뽑으면
+// optionsFor 의 빈 문자열 필터에 전부 걸려 목록이 **영구히 빈다** — 그러면
+// 산업별 탭에서 카드 11·12·13 에 도달할 길이 아예 없고, 카드 감춤 규칙(화면
+// 규칙 1)이 그 사실을 완벽히 숨겨 "데이터가 원래 없나 보다"로 읽힌다.
+// vacancyIndustry 는 선택 파일이라(R31) 아직 수집이 없으면 undefined 다 —
+// 그때는 빈 목록이 아니라 undefined 를 돌려주어, 부르는 쪽이 "선택지가 없는
+// select" 를 그리는 대신 select 자체를 안 내도록 한다.
+export function switcherRows(store, field) {
+  return field === "industry" ? store.vacancyIndustry?.rows : store.vacancy.rows;
+}
+
 // 시도를 바꾸면 optionsFor 의 목록이 통째로 달라진다. 지금 선택이 새
 // 목록에도 있으면 그대로 두고, 없으면(다른 시도에만 있던 값) 조용히 빈
 // 화면이 되는 대신 새 목록의 첫 값으로 떨어뜨린다(목록이 비어 있으면
