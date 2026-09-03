@@ -534,3 +534,20 @@ def test_series_rows_do_not_gain_measure_fields_they_never_had(recorded_layout):
 
     out = built["insured_series"]()
     assert out and all("gained" not in row and "lost" not in row for row in out)
+
+
+def test_aggregate_row_marked_by_the_extractor_is_not_a_data_row():
+    """추출기가 구조로 표시한 집계 행은 텍스트가 리프처럼 보여도 데이터가 아니다.
+
+    실측(2026-09-03): 페이지 경계에서 잘린 소계는 ' 전체' 접미가 없어
+    `['서울특별시', '11차_숙박 및 음식점업', '11차_숙박 및 음식점업', 18596]` 로
+    보이는데, 경력직이동에서 그 모양은 **정상 리프**이기도 하다(숙박→숙박
+    11,343 이 따로 있다). 텍스트로는 못 가른다 — 추출기의 표시를 믿는다.
+    """
+    spec = fetchers.MONTHLY_SPECS["mobility"]
+    leaf = {"(사업장)시도": "서울특별시", "산업_대분류": "11차_숙박 및 음식점업",
+            "산업(이전)_대분류": "11차_숙박 및 음식점업", olap.AGGREGATE_COLUMN: "0"}
+    cut_subtotal = {**leaf, olap.AGGREGATE_COLUMN: "1"}
+
+    assert fetchers._is_aggregate_row(cut_subtotal, spec) is True
+    assert fetchers._is_aggregate_row(leaf, spec) is False

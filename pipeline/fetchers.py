@@ -288,6 +288,14 @@ def _is_aggregate_row(row: dict, spec: Spec) -> bool:
        잡지 않는다. 축이 셋인 mobility 도 안전하다: 산업과 산업(이전)이 같은
        행은 정상이지만 시도 칸까지 같을 수는 없다.
     """
+    # 3) **추출기가 구조로 표시한 집계 행** (R70). 위 둘은 텍스트로 추정하는
+    #    규칙이라, 페이지 경계에서 잘린 소계처럼 ' 전체' 접미도 없고 축 칸도
+    #    전부 같지는 않은 행을 못 잡는다 — 그리고 경력직이동에서는 그 모양이
+    #    정상 리프이기도 해서(산업==산업(이전)) 텍스트로는 원리적으로 못 가른다.
+    #    행 축 레벨 여럿을 한 셀(colspan)로 덮었는지는 DOM 만 아는 사실이므로
+    #    추출기가 그대로 넘겨 준다(olap.AGGREGATE_COLUMN).
+    if (row.get(olap.AGGREGATE_COLUMN) or "").strip() == "1":
+        return True
     values = [(row.get(field) or "").strip() for field in spec.rows]
     if len(spec.rows) >= 2 and len(set(values)) == 1:
         return True

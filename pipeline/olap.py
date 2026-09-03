@@ -345,6 +345,17 @@ _SUMMARY_ROW_LABELS = frozenset({"총계"})
 # `Grid.summaries` 로 간다(더하면 이중계상이므로 본문에 남기면 안 된다).
 _SUMMARY_ROW_SUFFIX = " 전체"
 
+# 추출기가 덧붙이는 마지막 컬럼 — "이 행의 행-축 셀이 colspan 으로 레벨 여럿을
+# 덮었는가"("1"/"0"). 실측(2026-09-03, 경력직이동 3·4페이지 경계): **같은 소계
+# 행이 페이지 경계에서 두 번, 다르게 그려진다** — 3페이지 마지막에는
+# `td('11차_숙박 및 음식점업', colspan=2)`, 4페이지 맨 위에는
+# `td('11차_숙박 및 음식점업 전체', colspan=2, dx-row-total)` 로, 값은 둘 다
+# 18,596 이다. 앞엣것은 잘린 렌더라 ' 전체' 접미도 클래스도 없어서 **텍스트로는
+# 진짜 리프와 구별할 수 없다**(경력직이동에서 산업==산업(이전) 리프는 정상이다).
+# 구별되는 것은 구조뿐이다: 집계 행은 레벨 여럿을 한 셀로 덮고, 리프는 레벨마다
+# 자기 td 를 갖는다. 그 사실을 추정하지 않고 그대로 넘긴다.
+AGGREGATE_COLUMN = "__집계__"
+
 
 def _is_summary_label(text: str) -> bool:
     return text in _SUMMARY_ROW_LABELS or text.endswith(_SUMMARY_ROW_SUFFIX)
@@ -581,6 +592,7 @@ def _walk_paginated_grid(
 
 _EXTRACT_JS = r"""
 () => {
+  const AGGREGATE_COLUMN = "__집계__";
   function expandRow(tr) {
     const cells = Array.from(tr.querySelectorAll('td'));
     const out = [];
@@ -619,6 +631,7 @@ _EXTRACT_JS = r"""
   const carry = new Array(levels).fill(null);
   const rowLabels = rowLabelEls.map(tr => {
     const cells = new Array(levels).fill(null);
+    let spanned = false;
     for (let i = 0; i < levels; i++) {
       if (carry[i] && carry[i].left > 0) { cells[i] = carry[i].text; carry[i].left -= 1; }
     }
@@ -635,9 +648,10 @@ _EXTRACT_JS = r"""
         cells[i + k] = text;
         if (rs > 1) carry[i + k] = { text: text, left: rs - 1 };
       }
+      if (cs > 1 && levels > 1) spanned = true;
       i += cs - 1;
     }
-    return cells.map(v => (v === null ? '' : v));
+    return {cells: cells.map(v => (v === null ? '' : v)), spanned: spanned};
   });
 
   // 데이터 셀
@@ -645,9 +659,11 @@ _EXTRACT_JS = r"""
   const dataRows = dataTrs.map(tr =>
     Array.from(tr.querySelectorAll('td')).map(td => td.innerText.trim()));
 
-  const header = [...(rowFields.length ? rowFields : ['지역']), ...colLabels];
+  const header = [...(rowFields.length ? rowFields : ['지역']), ...colLabels,
+                  AGGREGATE_COLUMN];
 
-  const body = rowLabels.map((cells, i) => [...cells, ...(dataRows[i] || [])]);
+  const body = rowLabels.map((row, i) =>
+    [...row.cells, ...(dataRows[i] || []), row.spanned ? '1' : '0']);
   return [header, ...body];
 }
 """
