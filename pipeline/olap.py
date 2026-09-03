@@ -401,9 +401,18 @@ def _walk_paginated_grid(
         if page_number is None:
             if _PAGER_NEXT_LABEL not in labels:
                 break                      # 권위 있는 끝 — "다음"이 아예 없다
+            # 창 넘김 클릭도 번호 클릭과 똑같이 이따금 먹지 않는다 — 실측
+            # (2026-09-03): '다음' 은 창을 정상적으로 넘기는데(취업건수
+            # 1-10 → … → 191-200) EIS 가 느려진 순간 30초 폴링 예산 안에
+            # 라벨이 안 바뀌어, 200페이지를 다 걸을 수 있는 수집이 60페이지에서
+            # 통째로 버려졌다. 번호 클릭이 이미 받는 보호(_PAGE_CLICK_ATTEMPTS)를
+            # 여기에도 준다. 그래도 안 넘어가면 아래 예외는 그대로다.
             before = labels
-            _click_pager_label(page, _PAGER_NEXT_LABEL)
-            labels = _labels_after_window_move(page, before)
+            for _ in range(_PAGE_CLICK_ATTEMPTS):
+                _click_pager_label(page, _PAGER_NEXT_LABEL)
+                labels = _labels_after_window_move(page, before)
+                if labels != before:
+                    break
             _check_pager_labels(labels)
             page_number = _next_page_number(labels, visited)
             if page_number is None:

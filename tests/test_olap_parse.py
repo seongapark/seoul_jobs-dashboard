@@ -815,3 +815,34 @@ def test_fetch_grid_reads_reports_whose_grid_appears_only_after_the_requery():
 
     grid = olap.fetch_grid("http://fake", page=page, max_scrolls=5, after_load=after_load)
     assert grid.rows == [["서울", "10"]]
+
+
+def test_a_next_click_that_does_not_register_is_retried_before_failing():
+    """창 넘김 클릭도 이따금 먹지 않는다 — 번호 클릭과 같은 보호를 받아야 한다.
+
+    실측(2026-09-03, 취업건수 200페이지): '다음' 은 창을 정상적으로 넘기지만
+    (1-10 → … → 191-200), EIS 가 느려지면 30초 폴링 예산 안에 라벨이 안 바뀐다.
+    첫 실측 수집이 그렇게 60페이지에서 죽었다 — 200페이지를 다 걷고도 마지막
+    창 하나 때문에 한 시간짜리 수집이 통째로 버려진다. 번호 클릭은 이미 한 번
+    다시 눌러 보므로(_PAGE_CLICK_ATTEMPTS), 창 넘김도 같아야 한다.
+
+    재시도해도 안 넘어가면 예외는 그대로다 — 잘린 그리드를 반환하지 않는다는
+    성질은 `test_walk_raises_when_the_window_never_advances` 가 지킨다.
+    """
+    class _FlakyWindow(_FakePagedPage):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            self._ignored_once = False
+
+        def _advance_window(self):
+            if not self._ignored_once:
+                self._ignored_once = True     # 첫 '다음' 은 먹지 않는다
+                return
+            super()._advance_window()
+
+    page = _FlakyWindow(_pages(14))
+
+    grid = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+
+    assert len(grid.rows) == 13 * olap._PAGE_SIZE + 17
+    assert page.clicked.count("다음") >= 2
