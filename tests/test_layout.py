@@ -34,7 +34,12 @@ class _FakeLocator:
         if target_position != layout.DROP_AT_TOP:
             raise AssertionError(
                 f"영역 중앙 드롭은 순서를 보장하지 않는다 (target_position={target_position})")
-        self._page.dragged[target._selector].append(_field_of(self._selector))
+        field = _field_of(self._selector)
+        # 실측(2026-09-03, 피보험자): 드래그가 이따금 아예 안 먹는다.
+        if self._page.drops_to_ignore.get(field, 0) > 0:
+            self._page.drops_to_ignore[field] -= 1
+            return
+        self._page.dragged[target._selector].append(field)
 
 
 class _BusyLocator:
@@ -64,12 +69,14 @@ class _FakePage:
 
     def __init__(self, *, area_items=None, desc_cells=None, field_counts=None,
                  viewport_width=layout.EXPECTED_VIEWPORT_WIDTH, busy_forever=False,
-                 instance="_5990"):
+                 instance="_5990", drops_to_ignore=None):
         self.calls = []
         self.instance = instance
         # 페이지가 돌려줄 id 목록 — 필드초이서가 아예 없는 상황도 흉내낼 수 있게
         # 테스트가 갈아끼울 수 있다.
         self.instance_ids = None
+        # {필드 이름: 무시할 드래그 횟수} — "드래그가 이따금 안 먹는다" 재현용.
+        self.drops_to_ignore = dict(drops_to_ignore or {})
         self.row_area = f"#rowAdHocList1{instance}"
         self.col_area = f"#colAdHocList1{instance}"
         self.row_clear = f"{self.row_area}_clear"
@@ -85,6 +92,8 @@ class _FakePage:
 
     def click(self, selector):
         self.calls.append(("click", selector))
+        if selector.endswith("_clear"):
+            self.dragged[selector[: -len("_clear")]] = []
 
     def wait_for_timeout(self, ms):
         pass
@@ -248,3 +257,24 @@ def test_three_row_fields_land_in_the_requested_order():
     rows = ["(사업장)시도", "산업_대분류", "산업(이전)_대분류"]
     layout.set_layout(page, rows=rows, cols=["마감년월"])
     assert page.dragged["#rowAdHocList1_6157"] == rows
+
+
+def test_a_drag_that_does_not_register_is_retried_before_failing():
+    """실측(2026-09-03, 피보험자): 드래그가 이따금 아예 안 먹는다.
+
+    세 번째 실측 수집이 그렇게 죽었다 — 요청 ['(사업장)시군구', '직종_중분류'] 에
+    실제로는 시군구 하나만 들어갔다. 그 자리까지 34분을 걸어온 수집이 통째로
+    버려진다. 창 넘김(R61)·번호 클릭과 같은 이유이므로 같은 보호를 준다:
+    다시 놓아 보고, 그래도 안 되면 그때 실패한다.
+    """
+    page = _FakePage(drops_to_ignore={"직종_중분류": 1})
+    layout.set_layout(page, rows=["(사업장)시군구", "직종_중분류"])
+    assert page.dragged[page.row_area] == ["(사업장)시군구", "직종_중분류"]
+
+
+def test_a_drag_that_never_registers_still_raises():
+    """재시도해도 안 들어가면 조용히 다른 축을 수집하지 않는다 — 예외는 그대로."""
+    page = _FakePage(drops_to_ignore={"직종_중분류": 99})
+    with pytest.raises(layout.LayoutError):
+        layout.set_layout(page, rows=["(사업장)시군구", "직종_중분류"])
+    assert not [c for c in page.calls if c[0] == "requery"]

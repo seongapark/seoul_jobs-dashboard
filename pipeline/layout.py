@@ -63,6 +63,13 @@ FIELD_TEMPLATE = 'li[uni_nm="{field}"][prev-container="allList"]'
 # 됐다). 2026-09-02 의 "나중에 드래그한 것이 바깥" 규칙은 축이 둘일 때만 맞는
 # 우연이었다.
 DROP_AT_TOP = {"x": 20, "y": 4}
+
+# 드래그가 이따금 아예 안 먹는다 — 실측(2026-09-03, 피보험자): 요청
+# ['(사업장)시군구', '직종_중분류'] 에 시군구 하나만 들어갔다. 34분을 걸어온
+# 수집이 그 한 번 때문에 통째로 버려졌다. olap 의 페이지 클릭·창 넘김이 받는
+# 보호와 같은 이유·같은 모양이다: 영역을 비우고 다시 놓아 본 뒤, 그래도 안
+# 들어가면 그때 실패한다(요청과 다른 축으로는 절대 조회하지 않는다).
+PLACE_ATTEMPTS = 2
 AREA_ITEMS_JS = "els => els.map(e => e.getAttribute('uni_nm'))"
 DESC_TEXT_JS = "els => els.map(e => e.innerText.trim())"
 
@@ -161,14 +168,25 @@ def _areas(page) -> tuple[str, str]:
 
 
 def _place(page, fields, area: str) -> None:
-    """fields(바깥→안쪽)를 area 에 놓는다 — 상단 드롭이라 요청 순서 그대로 드래그한다."""
-    for field in fields:
-        _drag(page, field, area)
-    placed = _area_fields(page, area)
-    if placed != list(fields):
-        raise LayoutError(
-            f"{area} 에 요청한 축이 들어가지 않았다 — 요청 {list(fields)}, 실제 {placed}. "
-            "드래그가 먹지 않았을 수 있다 (재조회하지 않는다).")
+    """fields(바깥→안쪽)를 area 에 놓는다 — 상단 드롭이라 요청 순서 그대로 드래그한다.
+
+    요청대로 들어갈 때까지 `PLACE_ATTEMPTS` 번 시도한다. 다시 시도할 때는
+    영역을 먼저 비운다 — 반쯤 들어간 상태 위에 덧놓으면 순서가 어긋난다.
+    """
+    fields = list(fields)
+    placed: list[str] = []
+    for attempt in range(PLACE_ATTEMPTS):
+        if attempt:
+            page.click(f"{area}_clear")
+            page.wait_for_timeout(CLEAR_WAIT_MS)
+        for field in fields:
+            _drag(page, field, area)
+        placed = _area_fields(page, area)
+        if placed == fields:
+            return
+    raise LayoutError(
+        f"{area} 에 요청한 축이 들어가지 않았다 — 요청 {fields}, 실제 {placed} "
+        f"({PLACE_ATTEMPTS}번 시도). 드래그가 먹지 않았을 수 있다 (재조회하지 않는다).")
 
 
 def _requery(page) -> None:
