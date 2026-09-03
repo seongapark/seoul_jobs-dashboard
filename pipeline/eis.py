@@ -136,6 +136,15 @@ def normalize_name(text: str) -> str:
     text = re.sub(r"^[A-Z]\.", "", text)           # KOSIS 산업 대분류: "B."
     text = re.sub(r"^[A-Z]\d{2}\s+", "", text)     # KOSIS 산업 중분류: "B05 "
     text = re.sub(r"^\d+\s+", "", text)            # KOSIS 직종: "02 "
+    # R73 실측: 접두를 뗀 뒤에도 산업 23개 중 11개만 겹쳤다. 남은 차이는 **쉼표와
+    # 물결 띄어쓰기**다 — EIS 는 `'수도, 하수 및 폐기물 처리, 원료 재생업(36 ~ 39)'`,
+    # KOSIS 는 `'수도 하수 및 폐기물 처리 원료 재생업(36~39)'`. 쉼표를 공백으로
+    # 바꾸고 물결 주변 공백을 붙이면 겹침이 11 → 16 이 된다.
+    #
+    # 쉼표만 없애고 가운뎃점(·)은 남긴다 — 직종 이름의 구분자라 지우면 다른
+    # 직종끼리 같은 값이 될 수 있다(위 R40 규칙이 굳이 코드포인트를 맞춘 이유다).
+    text = text.replace(",", " ")
+    text = re.sub(r"\s*~\s*", "~", text)
     return re.sub(r"\s+", " ", text).strip()
 
 

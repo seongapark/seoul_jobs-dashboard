@@ -349,3 +349,28 @@ def test_occupation_normalization_is_unchanged():
     """짝 테스트 — R40 이 세운 직종 규칙은 그대로다."""
     assert eis.normalize_name("02 경영ㆍ행정ㆍ사무직") == "경영·행정·사무직"
     assert eis.normalize_name("전직종") == "전직종"
+
+
+def test_industry_names_reconcile_commas_and_range_spacing():
+    """실측(2026-09-03, 수집된 두 파일을 직접 대조): 접두를 뗀 뒤에도 23개 중 11개만
+    겹쳤다. 남은 차이는 **쉼표와 물결 띄어쓰기**였다.
+
+        EIS  : '사업시설 관리, 사업 지원 및 임대 서비스업(74~76)'
+        KOSIS: '사업시설 관리 사업 지원 및 임대 서비스업(74~76)'
+        EIS  : '수도, 하수 및 폐기물 처리, 원료 재생업(36 ~ 39)'
+        KOSIS: '수도 하수 및 폐기물 처리 원료 재생업(36~39)'
+
+    쉼표를 공백으로 바꾸고 물결 주변 공백을 붙이면 겹침이 11 → 16 이 된다(실측).
+    남는 7건은 결함이 아니다: 넷(농림어업·공공행정·국제기관·가구내고용활동)은
+    사업체노동력조사의 **조사 범위 밖**이고, 둘(분류불능·해당없음)은 EIS 전용
+    버킷이며, 하나(전기 가스 증기 및 공기 조절)는 출처 안쪽 띄어쓰기 차이다.
+    """
+    assert (eis.normalize_name("11차_사업시설 관리, 사업 지원 및 임대 서비스업(74~76)")
+            == eis.normalize_name("N.사업시설 관리 사업 지원 및 임대 서비스업(74~76)"))
+    assert (eis.normalize_name("11차_수도, 하수 및 폐기물 처리, 원료 재생업(36 ~ 39)")
+            == eis.normalize_name("E.수도 하수 및 폐기물 처리 원료 재생업(36~39)"))
+
+
+def test_separator_middots_are_still_preserved():
+    """짝 테스트 — 직종 이름의 가운뎃점은 쉼표가 아니므로 그대로 남는다."""
+    assert eis.normalize_name("02 경영ㆍ행정ㆍ사무직") == "경영·행정·사무직"
