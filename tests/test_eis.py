@@ -328,3 +328,24 @@ def test_short_sido_names_still_work():
     assert eis.sido_code("서울") == "11"
     assert eis.sido_code("경기") == "41"
     assert eis.sido_code("인천") == "28"
+
+
+def test_industry_names_lose_their_source_specific_prefixes():
+    """실측(2026-09-03, 실제 KOSIS 키): 산업 이름은 두 출처의 **접두만** 다르다.
+
+        EIS  : '11차_광업(05~08)'      (한국표준산업분류 11차 개정 표시)
+        KOSIS: 'B.광업(05~08)'         (분류 대분류 문자 코드)
+
+    R40 이 직종에서 없앤 것과 같은 종류의 차이인데 산업 축에는 안 걸려 있었다 —
+    반기 수집의 이름 겹침 검사가 "이름이 하나도 안 겹친다"로 잡았다. 접두를 떼면
+    두 출처가 같은 값이 된다(직종은 이미 `_strip_prefix` + 숫자 접두 규칙이 있다).
+    """
+    assert eis.normalize_name("11차_광업(05~08)") == "광업(05~08)"
+    assert eis.normalize_name("B.광업(05~08)") == "광업(05~08)"
+    assert eis.normalize_name("11차_건설업(41~42)") == eis.normalize_name("F.건설업(41~42)")
+
+
+def test_occupation_normalization_is_unchanged():
+    """짝 테스트 — R40 이 세운 직종 규칙은 그대로다."""
+    assert eis.normalize_name("02 경영ㆍ행정ㆍ사무직") == "경영·행정·사무직"
+    assert eis.normalize_name("전직종") == "전직종"
