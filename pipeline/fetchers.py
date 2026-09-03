@@ -529,7 +529,7 @@ def _fetch_series(spec: Spec, periods, *, browser, get, fetch, sleep, log) -> li
 
     **0행도 실패다 (리뷰 Critical 1).** 예외를 세는 것만으로는 부족하다:
     그리드가 깨끗이 받아지고 파싱까지 됐는데 `_metro_only` 가 하나도 못
-    맞추면(시도 라벨이 '서울' → '서울특별시' 로 바뀌기만 해도 그렇다) 예외
+    맞추면(시도 라벨이 우리가 모르는 표기로 바뀌기만 해도 그렇다) 예외
     없이 달마다 0행이 나온다. 그 아래에는 그물이 없다 — `run_series` 에는
     `check_not_all_zero` 의 짝이 없고 `check_series_shape([])`/
     `check_series_months([])` 는 둘 다 무사통과라, 빈 시계열 파일이 새

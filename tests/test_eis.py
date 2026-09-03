@@ -299,3 +299,32 @@ def test_insured_sido_keeps_the_workplace_axis():
     with pytest.raises(eis.WrongAxis):
         eis.collect_insured_sido([{"마감년월": "2026년 07월", "(근무지역)시도": "서울",
                                    "피보험자수(전체)": "10"}])
+
+
+def test_sido_axis_accepts_the_full_administrative_names():
+    """실측(2026-09-03): 축마다 시도 이름 표기가 다르다.
+
+    (근무지역)시도 는 '서울'·'경기'·'인천' 로 오는데, **(사업장)시도 는
+    '서울특별시'·'경기도'·'인천광역시'** 로 온다. 이름 표가 짧은 이름만 알아서
+    여덟 번째 실측 수집에서 `insured_sido` 는 '총계' 한 행만 남고(수도권 시도가
+    통째로 사라짐) `mobility` 는 0행이 됐다. 두 표기를 다 받아야 한다.
+    """
+    rows = [
+        {"마감년월": "2026년07월", "(사업장)시도": "서울특별시",
+         "피보험자수(전체)": "1,000", "취득자수(월)": "10", "상실자수(월)": "5"},
+        {"마감년월": "2026년07월", "(사업장)시도": "경기도",
+         "피보험자수(전체)": "2,000", "취득자수(월)": "20", "상실자수(월)": "6"},
+        {"마감년월": "2026년07월", "(사업장)시도": "인천광역시",
+         "피보험자수(전체)": "3,000", "취득자수(월)": "30", "상실자수(월)": "7"},
+    ]
+
+    out = eis.collect_insured_sido(rows)
+
+    assert [row["sido"] for row in out] == ["11", "41", "28"]
+
+
+def test_short_sido_names_still_work():
+    """짝 테스트 — (근무지역)시도 의 짧은 표기는 그대로 동작해야 한다."""
+    assert eis.sido_code("서울") == "11"
+    assert eis.sido_code("경기") == "41"
+    assert eis.sido_code("인천") == "28"
