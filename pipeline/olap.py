@@ -338,6 +338,24 @@ def _is_summary_label(text: str) -> bool:
     return text in _SUMMARY_ROW_LABELS or text.endswith(_SUMMARY_ROW_SUFFIX)
 
 
+def _is_summary_row(row: list[str]) -> bool:
+    """이 행이 (그랜드토탈이든 그룹 소계든) 요약 행인가 — **어느 칸이든** 본다.
+
+    실측(2026-09-03, 경력직이동 202607): 중첩 축이 셋이면 **안쪽 레벨** 소계가
+    페이지마다 고정 반복되는데, 그 행의 첫 칸은 진짜 시도다
+    (`['서울특별시', '11차_전기…공급업 전체', '11차_전기…공급업 전체', '70']`).
+    첫 칸만 보면 안 걸려서, 여섯 번째 실측 수집이 46분을 걷고 여기서 죽었다.
+    `fetchers._is_aggregate_row` 가 이미 같은 규칙을 쓴다 — "시도는 '서울'인데
+    산업 칸이 'C 제조업 전체'인 안쪽 레벨 소계는 이 규칙에서만 걸린다".
+
+    진짜 데이터 행을 오분류하지 않는 근거: 지역·직종·산업 이름 중 " 전체" 로
+    끝나는 것이 없고(접미 규칙은 앞에 이름과 공백을 요구하므로 값이 정확히
+    "전체" 인 칸도 걸리지 않는다), 측정값 칸은 숫자다. mobility 에서 산업과
+    산업(이전)이 같은 행은 정상인데, 그 칸들은 " 전체" 로 끝나지 않는다.
+    """
+    return any(_is_summary_label(cell) for cell in row)
+
+
 class Grid(NamedTuple):
     """`_walk_paginated_grid`/`fetch_grid` 의 반환 타입 (R15, 리뷰 루프).
 
@@ -522,7 +540,7 @@ def _walk_paginated_grid(
         if len(pages) <= 1:
             continue
         row = seen[key]
-        if _is_summary_label(row[0]):
+        if _is_summary_row(row):
             summaries[key] = row
             continue
         raise OlapPageWalkError(

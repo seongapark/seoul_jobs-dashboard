@@ -890,3 +890,45 @@ def test_the_walk_waits_out_the_loading_overlay_instead_of_clicking_into_it():
     grid = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
 
     assert len(grid.rows) == 13 * olap._PAGE_SIZE + 17
+
+
+def test_an_inner_level_group_subtotal_that_repeats_is_a_summary_not_a_failure():
+    """실측(2026-09-03, 경력직이동 202607): 중첩 축이 셋이면 **안쪽 레벨** 그룹
+    소계가 페이지마다 맨 위에 고정 반복된다.
+
+        ['총계', '총계', '총계', '591,319']                         ← 그랜드토탈
+        ['서울특별시 전체', '서울특별시 전체', '서울특별시 전체', ...]  ← 시도 소계
+        ['서울특별시', '11차_전기…공급업 전체', '11차_전기…공급업 전체', '70']
+
+    셋째 행은 **첫 칸이 진짜 시도**라 `_is_summary_label(row[0])` 에 안 걸려,
+    여섯 번째 실측 수집이 46분을 걷고 그 자리에서 죽었다. `fetchers._is_aggregate_row`
+    가 이미 문서화한 경우다 — "시도는 '서울'인데 산업 칸이 'C 제조업 전체'인
+    안쪽 레벨 소계는 이 규칙에서만 걸린다". 판정을 **어느 칸이든** 보도록 맞춘다.
+
+    진짜 데이터 행은 소계로 오분류되지 않는다: mobility 에서 산업==산업(이전)은
+    정상이지만(`['서울특별시', '11차_농업…', '11차_농업…', '28']`) 그 칸들은
+    ' 전체' 로 끝나지 않는다 — 아래 짝 테스트가 그것을 고정한다.
+    """
+    pages = _pages(3)
+    subtotal = ["서울특별시", "11차_전기, 가스 전체", "11차_전기, 가스 전체", "70"]
+    pages[0] = [subtotal] + pages[0][1:]
+    pages[1] = [subtotal] + pages[1][1:]
+    page = _FakePagedPage(pages, header=["시도", "산업", "산업(이전)", "값"])
+
+    grid = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+
+    assert subtotal in grid.summaries
+    assert subtotal not in grid.rows
+
+
+def test_a_repeated_leaf_row_with_the_same_industry_twice_still_fails():
+    """짝 테스트 — mobility 의 정상 데이터 행(산업==산업(이전))이 반복되면
+    그것은 여전히 고장이다. ' 전체' 접미가 없으므로 소계로 봐주지 않는다."""
+    pages = _pages(3)
+    leaf = ["서울특별시", "11차_농업, 임업 및 어업", "11차_농업, 임업 및 어업", "28"]
+    pages[0] = [leaf] + pages[0][1:]
+    pages[1] = [leaf] + pages[1][1:]
+    page = _FakePagedPage(pages, header=["시도", "산업", "산업(이전)", "값"])
+
+    with pytest.raises(olap.OlapPageWalkError):
+        olap.fetch_grid("http://fake", page=page, max_scrolls=10)
