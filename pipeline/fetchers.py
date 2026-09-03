@@ -493,10 +493,14 @@ def _totals(summaries: list[dict], spec: Spec) -> dict | None:
 
 
 def _grid(spec: Spec, period: str, *, browser, get, fetch) -> olap.ParsedGrid:
+    # 주소의 closYm 은 **무시된다**(실측 2026-09-03) — 기간은 UI 로 넣는다.
+    # 주소에도 그대로 두는 이유: 사람이 로그의 주소를 보고 어느 달을 요청했는지
+    # 알 수 있고, 언젠가 EIS 가 그 파라미터를 살리면 그때는 둘이 일치한다.
+    # 조용히 다른 달을 받아 가지 않는다는 보장은 `_normalize` 의 마감년월 대조다.
     url = month_url(eis_report.REPORTS[spec.report], period, get=get)
     return fetch(url, browser=browser,
                  after_load=lambda page: layout.set_layout(
-                     page, rows=list(spec.rows), cols=[PERIOD_COLUMN]))
+                     page, rows=list(spec.rows), cols=[PERIOD_COLUMN], period=period))
 
 
 # ---------------------------------------------------------------------------

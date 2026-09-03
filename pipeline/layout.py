@@ -80,6 +80,17 @@ PLACE_ATTEMPTS = 2
 # (빈 영역에는 어느 방식이든 들어가서, 첫 필드만 놓는 데이터셋에서는 안 드러났다).
 DRAG_STEPS = 10
 DRAG_STEP_MS = 40
+
+# 조회기간(시작·끝). 실측(2026-09-03): **뷰어 주소의 `closYm` 은 무시된다** —
+# 어느 달을 넣어도 그리드가 최신월을 돌려준다(24개월 백필이 그래서 23개월
+# 실패했고, `_normalize` 의 마감년월 대조가 그것을 잡았다). 기간도 축과
+# 마찬가지로 UI 로만 정할 수 있다: 보이는 텍스트 에디터 중 값이 YYYYMM 인
+# **둘**이 조회기간 시작·끝이고(나머지는 '전체' 같은 다른 컨트롤이다), 그 둘을
+# 바꾼 뒤 재조회하면 그리드가 실제로 그 달로 바뀐다(202505 로 실측 확인).
+PERIOD_INPUT_SELECTOR = "input.dx-texteditor-input"
+PERIOD_VALUE_RE = re.compile(r"^\d{6}$")
+PERIOD_INPUT_COUNT = 2
+PERIOD_TYPE_DELAY_MS = 30
 AREA_ITEMS_JS = "els => els.map(e => e.getAttribute('uni_nm'))"
 DESC_TEXT_JS = "els => els.map(e => e.innerText.trim())"
 
@@ -234,7 +245,34 @@ def _requery(page) -> None:
         f"('{BUSY_TEXT}' 가 계속 떠 있다) — 잘렸을 수 있는 그리드를 읽지 않는다.")
 
 
-def set_layout(page, *, rows, cols=()) -> None:
+def _set_period(page, period: str) -> None:
+    """조회기간 두 칸을 `period`(YYYYMM)로 바꾼다.
+
+    두 칸을 정확히 못 찾으면 어림으로 아무 칸이나 건드리지 않고 `LayoutError` 를
+    낸다 — 엉뚱한 칸에 값을 넣으면 조용히 다른 조건으로 조회된다.
+    """
+    inputs = page.locator(PERIOD_INPUT_SELECTOR)
+    targets = []
+    for index in range(inputs.count()):
+        element = inputs.nth(index)
+        if not element.is_visible():
+            continue
+        if PERIOD_VALUE_RE.match(element.input_value() or ""):
+            targets.append(element)
+    if len(targets) != PERIOD_INPUT_COUNT:
+        raise LayoutError(
+            f"조회기간 칸을 {PERIOD_INPUT_COUNT}개 찾지 못했다 (찾은 것 {len(targets)}개, "
+            f"셀렉터: {PERIOD_INPUT_SELECTOR}) — 어느 칸이 기간인지 모른 채 "
+            "조회하지 않는다.")
+    for element in targets:
+        element.click()
+        element.press("Control+a")
+        element.type(period, delay=PERIOD_TYPE_DELAY_MS)
+        element.press("Enter")
+        page.wait_for_timeout(DRAG_WAIT_MS)
+
+
+def set_layout(page, *, rows, cols=(), period=None) -> None:
     """행/열 축을 rows·cols 로 바꾼다. rows·cols 는 **바깥→안쪽** 순서다.
 
     초기화 → 드래그 → (드래그 검증) → 재조회 → (렌더 결과 검증) 순으로 돈다.
@@ -256,6 +294,10 @@ def set_layout(page, *, rows, cols=()) -> None:
     _place(page, rows, row_area)
     if cols:
         _place(page, cols, col_area)
+
+    # 기간은 재조회 **전에** 넣는다 — 재조회 한 번으로 축과 기간이 함께 반영된다.
+    if period is not None:
+        _set_period(page, period)
 
     _requery(page)
 

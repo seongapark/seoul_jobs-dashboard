@@ -30,6 +30,45 @@ class _FakeLocator:
         return self._page.box_of(self._selector)
 
 
+class _FakeInput:
+    """조회기간 텍스트 에디터 하나 (DevExtreme dx-texteditor-input)."""
+
+    def __init__(self, page, value, visible=True):
+        self._page = page
+        self.value = value
+        self._visible = visible
+
+    def is_visible(self):
+        return self._visible
+
+    def input_value(self):
+        return self.value
+
+    def click(self):
+        pass
+
+    def press(self, keys):
+        if keys == "Control+a":
+            self._page.selected = self
+        elif keys == "Enter":
+            pass
+
+    def type(self, text, delay=None):
+        self.value = text
+        self._page.calls.append(("period", text))
+
+
+class _InputsLocator:
+    def __init__(self, inputs):
+        self._inputs = inputs
+
+    def count(self):
+        return len(self._inputs)
+
+    def nth(self, index):
+        return self._inputs[index]
+
+
 class _BusyLocator:
     """실측: '작업 취소' 노드는 **항상 DOM 에 있고** 보이기/숨기기로만 토글된다."""
 
@@ -57,7 +96,7 @@ class _FakePage:
 
     def __init__(self, *, area_items=None, desc_cells=None, field_counts=None,
                  viewport_width=layout.EXPECTED_VIEWPORT_WIDTH, busy_forever=False,
-                 instance="_5990", drops_to_ignore=None):
+                 instance="_5990", drops_to_ignore=None, period_value="202607"):
         self.calls = []
         self.instance = instance
         # 페이지가 돌려줄 id 목록 — 필드초이서가 아예 없는 상황도 흉내낼 수 있게
@@ -65,6 +104,12 @@ class _FakePage:
         self.instance_ids = None
         # {필드 이름: 무시할 드래그 횟수} — "드래그가 이따금 안 먹는다" 재현용.
         self.drops_to_ignore = dict(drops_to_ignore or {})
+        # 실측(2026-09-03): 보이는 텍스트 에디터 중 값이 YYYYMM 인 것이 둘이고,
+        # 그 둘이 조회기간(시작·끝)이다. 나머지는 '전체' 같은 다른 컨트롤이다.
+        self.period_inputs = [_FakeInput(self, period_value),
+                              _FakeInput(self, period_value)]
+        self.other_inputs = [_FakeInput(self, ""), _FakeInput(self, "전체"),
+                             _FakeInput(self, "Y", visible=False)]
         self.row_area = f"#rowAdHocList1{instance}"
         self.col_area = f"#colAdHocList1{instance}"
         self.row_clear = f"{self.row_area}_clear"
@@ -157,6 +202,9 @@ class _FakePage:
     def locator(self, selector):
         if selector == f"text={layout.BUSY_TEXT}":
             return _BusyLocator(self._busy_forever)
+        if selector == layout.PERIOD_INPUT_SELECTOR:
+            return _InputsLocator([*self.other_inputs[:1], *self.period_inputs,
+                                   *self.other_inputs[1:]])
         return _FakeLocator(self, selector)
 
     def eval_on_selector_all(self, selector, js):
@@ -338,3 +386,27 @@ def test_a_drag_that_never_registers_still_raises():
     with pytest.raises(layout.LayoutError):
         layout.set_layout(page, rows=["(사업장)시군구", "직종_중분류"])
     assert not [c for c in page.calls if c[0] == "requery"]
+
+
+def test_the_query_period_is_set_through_the_ui_before_requerying():
+    """실측(2026-09-03): 뷰어 주소의 `closYm` 은 **무시된다** — 어느 달을 넣어도
+    그리드가 최신월(2026년 07월)을 돌려준다. 24개월 백필이 그래서 23개월 실패했다
+    (`마감년월` 대조 그물이 잡았다). 기간도 축과 마찬가지로 UI 로만 정할 수 있다:
+    보이는 텍스트 에디터 중 값이 YYYYMM 인 둘(조회기간 시작·끝)을 바꾸고 재조회하면
+    그리드가 실제로 그 달로 바뀐다(202505 로 실측 확인).
+    """
+    page = _FakePage()
+
+    layout.set_layout(page, rows=["(지역별)시도"], cols=["마감년월"], period="202505")
+
+    assert [inp.value for inp in page.period_inputs] == ["202505", "202505"]
+    assert [inp.value for inp in page.other_inputs] == ["", "전체", "Y"]
+    kinds = [c[0] for c in page.calls]
+    assert kinds.index("period") < kinds.index("requery")
+
+
+def test_layout_without_a_period_leaves_the_query_period_alone():
+    """기간을 안 주면 건드리지 않는다 — 기존 호출부의 동작이 바뀌지 않는다."""
+    page = _FakePage()
+    layout.set_layout(page, rows=["(지역별)시도"])
+    assert [inp.value for inp in page.period_inputs] == ["202607", "202607"]

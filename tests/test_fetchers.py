@@ -77,8 +77,8 @@ def recorded_layout(monkeypatch):
     """layout.set_layout 을 기록기로 바꾼다 — 어떤 축을 요청했는지 본다."""
     seen = []
 
-    def record(page, *, rows, cols=()):
-        seen.append({"rows": list(rows), "cols": list(cols)})
+    def record(page, *, rows, cols=(), period=None):
+        seen.append({"rows": list(rows), "cols": list(cols), "period": period})
 
     monkeypatch.setattr(layout, "set_layout", record)
     return seen
@@ -551,3 +551,19 @@ def test_aggregate_row_marked_by_the_extractor_is_not_a_data_row():
 
     assert fetchers._is_aggregate_row(cut_subtotal, spec) is True
     assert fetchers._is_aggregate_row(leaf, spec) is False
+
+
+def test_grid_sets_the_query_period_through_the_ui(recorded_layout):
+    """실측(2026-09-03): 주소의 closYm 은 무시된다 — 기간을 UI 로 넣어야 한다.
+
+    24개월 백필이 23개월 실패한 원인이다(요청한 달과 무관하게 최신월이 왔고,
+    `_normalize` 의 마감년월 대조가 잡았다). 월간 수집이 지금까지 통과한 것은
+    요청한 달이 마침 최신월이라 **우연히** 맞았기 때문이므로, 월간·시계열 둘 다
+    기간을 명시해야 한다.
+    """
+    spec = fetchers.MONTHLY_SPECS["vacancy_sido"]
+    grid = _FakeGrid(result=_series_grid("202505"))
+
+    fetchers._grid(spec, "202505", browser=object(), get=_fake_get(), fetch=grid)
+
+    assert recorded_layout[-1]["period"] == "202505"
