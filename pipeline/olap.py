@@ -619,14 +619,21 @@ def fetch_grid(url: str, *, page, max_scrolls: int = 200, after_load=None) -> Gr
       - 컨테이너는 렌더됐지만 데이터 행이 하나도 없으면 → OlapExtractionError
     """
     page.goto(url, wait_until="networkidle", timeout=90_000)
-    page.wait_for_selector("div.dx-pivotgrid-area-data", timeout=60_000)
 
     # Task 15a — 그리드를 읽기 **전에** 축을 바꿀 자리. 화면이 요구하는 축
     # (시군구 × 직종 등)은 뷰어 URL 로는 못 얻고 좌측 필드초이서 드래그로만
     # 얻는데(pipeline/layout.py), 그 조작은 goto 와 추출 사이에 끼어야 한다.
     # 훅이 예외를 내면 그대로 위로 올린다 — 옛 축 그대로 읽어 가지 않는다.
+    #
+    # 이 훅은 그리드를 기다리기 **전에** 돈다. 실측(2026-09-03, 경력직이동):
+    # 어떤 리포트는 조회를 누르기 전에 그리드가 아예 없다 — 그리드부터
+    # 기다리면 60초를 다 쓰고 타임아웃으로 죽는다(첫 실측 수집에서 mobility 가
+    # 그렇게 실패했다). 훅(set_layout)은 자기 전제인 좌측 필드초이서를 스스로
+    # 기다리므로 여기서 대신 기다려 줄 것이 없다.
     if after_load is not None:
         after_load(page)
+
+    page.wait_for_selector("div.dx-pivotgrid-area-data", timeout=60_000)
 
     # 페이저는 데이터 영역보다 늦게 뜰 수 있다. 고정 시간만 대기한 뒤 바로
     # 세면, 진짜 다중 페이지 그리드도 "아직 안 떴을 뿐"인데 "없다"고 오판해

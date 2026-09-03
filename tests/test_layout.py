@@ -1,5 +1,7 @@
 """pipeline.layout 테스트 — 가짜 page 스텁으로 드래그 조작 순서와 실패를 검증한다.
 네트워크·브라우저 없음 (tests/test_olap_parse.py 의 스텁 스타일을 따른다)."""
+import collections
+
 import pytest
 
 from pipeline import layout
@@ -24,8 +26,14 @@ class _FakeLocator:
     def scroll_into_view_if_needed(self):
         self._page.calls.append(("scroll", self._selector))
 
-    def drag_to(self, target):
-        self._page.calls.append(("drag", self._selector, target._selector))
+    def drag_to(self, target, target_position=None):
+        self._page.calls.append(("drag", self._selector, target._selector, target_position))
+        # 실측(2026-09-03, 경력직이동 3축 + 유효구인구직 1·2축): 영역 **상단**에
+        # 떨어뜨리면 드래그한 순서 그대로 쌓인다. 중앙에 떨어뜨리면 항목이 둘일 때
+        # 가운데로 끼어들어 3축에서 순서가 어긋난다 — 그래서 상단 드롭을 요구한다.
+        if target_position != layout.DROP_AT_TOP:
+            raise AssertionError(
+                f"영역 중앙 드롭은 순서를 보장하지 않는다 (target_position={target_position})")
         self._page.dragged[target._selector].append(_field_of(self._selector))
 
 
@@ -55,9 +63,20 @@ class _FakePage:
     """
 
     def __init__(self, *, area_items=None, desc_cells=None, field_counts=None,
-                 viewport_width=layout.EXPECTED_VIEWPORT_WIDTH, busy_forever=False):
+                 viewport_width=layout.EXPECTED_VIEWPORT_WIDTH, busy_forever=False,
+                 instance="_5990"):
         self.calls = []
-        self.dragged = {layout.ROW_AREA: [], layout.COL_AREA: []}
+        self.instance = instance
+        # 페이지가 돌려줄 id 목록 — 필드초이서가 아예 없는 상황도 흉내낼 수 있게
+        # 테스트가 갈아끼울 수 있다.
+        self.instance_ids = None
+        self.row_area = f"#rowAdHocList1{instance}"
+        self.col_area = f"#colAdHocList1{instance}"
+        self.row_clear = f"{self.row_area}_clear"
+        self.col_clear = f"{self.col_area}_clear"
+        # 실제 코드가 어떤 인스턴스를 골랐든 기록한다 — 하드코딩된 번호를 쓰면
+        # 이 페이지의 번호와 달라지고, 그 차이가 테스트에서 드러난다.
+        self.dragged = collections.defaultdict(list)
         self._area_items = area_items
         self._desc_cells = desc_cells
         self.field_counts = field_counts or {}
@@ -70,23 +89,41 @@ class _FakePage:
     def wait_for_timeout(self, ms):
         pass
 
+    def wait_for_selector(self, selector, **kwargs):
+        """set_layout 은 자기 전제(좌측 필드초이서)를 스스로 기다린다.
+
+        instance_ids 를 빈 목록으로 준 테스트는 "패널이 끝내 안 뜬다"를 뜻하므로
+        실제 Playwright 처럼 타임아웃을 낸다.
+        """
+        self.calls.append(("wait", selector))
+        if selector == layout.INSTANCE_PROBE and self.instance_ids == []:
+            raise TimeoutError(f"타임아웃 (가짜): {selector}")
+
     def locator(self, selector):
         if selector == f"text={layout.BUSY_TEXT}":
             return _BusyLocator(self._busy_forever)
         return _FakeLocator(self, selector)
 
     def eval_on_selector_all(self, selector, js):
-        if selector.startswith(layout.ROW_AREA):
+        if selector == layout.INSTANCE_PROBE:
+            if self.instance_ids is not None:
+                return self.instance_ids
+            # 실측: 같은 접미사를 가진 노드가 여럿이다(영역 자체, _clear, _0 …).
+            return [f"rowAdHocList1{self.instance}",
+                    f"rowAdHocList1{self.instance}_clear",
+                    f"rowAdHocList1{self.instance}_0"]
+        if selector.startswith("#rowAdHocList1"):
+            area = selector.split(" ")[0]
             items = (self._area_items if self._area_items is not None
-                     else list(reversed(self.dragged[layout.ROW_AREA])))
+                     else list(self.dragged[area]))
             # 실측: 영역 li 사이에 uni_nm 없는 자리표시자(None)가 섞여 있다
             return [x for item in items for x in (item, None)]
-        if selector.startswith(layout.COL_AREA):
-            return list(reversed(self.dragged[layout.COL_AREA]))
+        if selector.startswith("#colAdHocList1"):
+            return list(self.dragged[selector.split(" ")[0]])
         if selector == layout.DESC_CELLS:
             if self._desc_cells is not None:
                 return self._desc_cells
-            return list(reversed(self.dragged[layout.ROW_AREA]))
+            return list(self.dragged[self.row_area])
         raise AssertionError(f"예상 못 한 셀렉터: {selector}")
 
     class _Mouse:
@@ -106,17 +143,22 @@ def test_clears_both_areas_then_drags_then_requeries():
     layout.set_layout(page, rows=["(근무지역)시군구", "직종_중분류"])
     kinds = [c[0] for c in page.calls]
     assert kinds.index("click") < kinds.index("drag") < kinds.index("requery")
-    assert ("click", layout.ROW_CLEAR) in page.calls
-    assert ("click", layout.COL_CLEAR) in page.calls
+    assert ("click", page.row_clear) in page.calls
+    assert ("click", page.col_clear) in page.calls
 
 
-def test_drag_order_puts_the_first_requested_field_outermost():
-    """rows 는 '바깥→안쪽' 축 순서다. 실측(2026-09-02): 나중에 드래그한 필드가
-    바깥쪽이 되므로 요청 순서의 역순으로 끌어놓아야 한다."""
+def test_fields_are_dragged_in_the_requested_outer_to_inner_order():
+    """rows 는 '바깥→안쪽' 축 순서다. 실측(2026-09-03): 영역 **상단**에 떨어뜨리면
+    드래그한 순서 그대로 쌓이므로 요청 순서 그대로 끌어놓는다.
+
+    2026-09-02 실측은 영역 **중앙**에 떨어뜨려 "나중에 드래그한 것이 바깥"으로
+    보였는데, 그것은 축이 둘일 때만 맞는 우연이었다(항목이 하나뿐인 영역의
+    중앙은 그 항목 앞이라 앞에 끼어든다). 축이 셋인 경력직이동에서 그 규칙이
+    깨졌다 — 요청 [시도, 산업, 산업(이전)] 이 [산업, 시도, 산업(이전)] 이 됐다."""
     page = _FakePage()
     layout.set_layout(page, rows=["(근무지역)시군구", "직종_중분류"])
     dragged = [_field_of(c[1]) for c in page.calls if c[0] == "drag"]
-    assert dragged == ["직종_중분류", "(근무지역)시군구"]
+    assert dragged == ["(근무지역)시군구", "직종_중분류"]
 
 
 def test_missing_field_raises_before_requery():
@@ -173,4 +215,36 @@ def test_column_fields_are_placed_too():
     """마감년월을 열 축에 두는 기본 레이아웃도 만들 수 있어야 한다."""
     page = _FakePage()
     layout.set_layout(page, rows=["(지역별)시도"], cols=["마감년월"])
-    assert page.dragged[layout.COL_AREA] == ["마감년월"]
+    assert page.dragged[page.col_area] == ["마감년월"]
+
+
+def test_instance_id_is_read_from_the_page_not_hardcoded():
+    """WISE 인스턴스 접미사는 **리포트마다 다르다** (2026-09-03 실측:
+    유효구인구직 `_5990`, 취업건수 `_5987`, 피보험자 `_6248`). 상수로 박아 두면
+    유효구인구직 말고는 초기화 클릭이 Playwright 타임아웃으로 죽는다 —
+    첫 실측 수집이 정확히 그렇게 실패했다. 그래서 그 번호는 페이지에게 묻는다."""
+    page = _FakePage(instance="_6248")
+    layout.set_layout(page, rows=["(사업장)시도"], cols=["마감년월"])
+    assert ("click", "#rowAdHocList1_6248_clear") in page.calls
+    assert ("click", "#colAdHocList1_6248_clear") in page.calls
+    assert page.dragged["#colAdHocList1_6248"] == ["마감년월"]
+
+
+def test_missing_field_chooser_raises_instead_of_guessing_an_instance():
+    """필드초이서를 못 찾으면 어림수를 쓰지 않고 시끄럽게 실패한다."""
+    page = _FakePage()
+    page.instance_ids = []
+    with pytest.raises(layout.LayoutError):
+        layout.set_layout(page, rows=["(지역별)시도"])
+
+
+def test_three_row_fields_land_in_the_requested_order():
+    """경력직이동은 행 축이 셋이다 — 2축에서 통한 규칙이 여기서 깨졌다.
+
+    실측(2026-09-03) 요청 ['(사업장)시도', '산업_대분류', '산업(이전)_대분류'] 에
+    대해 중앙 드롭+역순은 ['산업_대분류', '(사업장)시도', '산업(이전)_대분류'] 를
+    만들었고, 상단 드롭+정순이 요청 그대로를 만들었다."""
+    page = _FakePage(instance="_6157")
+    rows = ["(사업장)시도", "산업_대분류", "산업(이전)_대분류"]
+    layout.set_layout(page, rows=rows, cols=["마감년월"])
+    assert page.dragged["#rowAdHocList1_6157"] == rows

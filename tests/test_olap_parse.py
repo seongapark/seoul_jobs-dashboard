@@ -95,7 +95,8 @@ class _FakePage:
 
     def __init__(self, windows=None, infinite_new_rows: bool = False,
                  header=None, scroller_raises: bool = False, pager_count: int = 1,
-                 pager_wait_raises: bool = False, pager_labels=None):
+                 pager_wait_raises: bool = False, pager_labels=None,
+                 grid_needs_requery: bool = False):
         self._windows = windows or []
         self._infinite = infinite_new_rows
         self._header = header or ["지역", "값"]
@@ -107,6 +108,8 @@ class _FakePage:
         self._call = 0
         self.scroll_calls = 0
         self.click_calls = 0
+        self.grid_needs_requery = grid_needs_requery
+        self.after_load_done = False
 
     # Playwright page 인터페이스 중 fetch_grid 가 실제로 쓰는 것만 흉내낸다
     def goto(self, *a, **k):
@@ -117,6 +120,11 @@ class _FakePage:
             self.pager_wait_calls += 1
             if self.pager_wait_raises:
                 raise TimeoutError(f"타임아웃 (가짜): {selector}")
+            return
+        if "pivotgrid-area-data" in selector and self.grid_needs_requery                 and not self.after_load_done:
+            # 실측(2026-09-03, 경력직이동): 이 리포트는 조회를 누르기 전에는
+            # 그리드가 아예 없다. 조회는 after_load(set_layout)가 한다.
+            raise TimeoutError(f"타임아웃 (가짜): {selector}")
         # 그 외(예: area-data 컨테이너)는 항상 뜬 것으로 본다.
 
     def wait_for_timeout(self, *a, **k):
@@ -791,3 +799,19 @@ def test_a_click_that_does_not_take_is_retried_once():
 
     assert page._dropped
     assert {row[0] for row in grid.rows} == {row[0] for body in pages for row in body}
+
+
+def test_fetch_grid_reads_reports_whose_grid_appears_only_after_the_requery():
+    """실측(2026-09-03, 경력직이동): 이 리포트는 조회를 누르기 전에 그리드가 없다.
+
+    그리드를 after_load **전에** 기다리면 60초를 다 쓰고 타임아웃으로 죽는다 —
+    첫 실측 수집에서 mobility 가 정확히 그렇게 실패했다. 그리드는 축을 바꾸고
+    조회한 **뒤에** 기다려야 한다.
+    """
+    page = _FakePage(windows=[[["서울", "10"]]], grid_needs_requery=True)
+
+    def after_load(p):
+        p.after_load_done = True
+
+    grid = olap.fetch_grid("http://fake", page=page, max_scrolls=5, after_load=after_load)
+    assert grid.rows == [["서울", "10"]]
