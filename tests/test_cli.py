@@ -371,3 +371,58 @@ def test_main_halfyear_dies_with_readable_message_when_api_key_missing(tmp_path,
 def test_main_unknown_mode_dies():
     with pytest.raises(SystemExit):
         cli.main("no-such-mode")
+
+
+def test_main_halfyear_accepts_an_explicit_period(tmp_path, monkeypatch):
+    """수동 실행은 기간을 직접 줄 수 있어야 한다.
+
+    실측(2026-09-03): `_halfyear_period()` 는 cron(6월 20일·12월 20일)에 맞춰
+    7~12월 실행이면 그 해 하반기(`YYYY02`)를 요청한다. 그런데 하반기 조사는
+    12월경에야 공표되므로, 9월에 첫 수집을 수동으로 돌리면 KOSIS 가
+    "데이터가 존재하지 않습니다"로 답한다(`202601` 은 186행이 정상적으로 온다).
+    자동 실행 기본값은 그대로 두고, 수동 실행이 기간을 고를 수 있게 한다.
+    """
+    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    monkeypatch.setenv("KOSIS_API_KEY", "test-key")
+    (tmp_path / "data").mkdir()
+    _freeze(monkeypatch, 2026, 9, 3)        # 기본값이라면 202602 를 요청할 날짜
+
+    calls = {}
+
+    def fake_run_halfyear(period, *, out_dir, api_key, collector=None,
+                          out_name=None, compare_names=None):
+        calls["period"] = period
+        return {out_name: 1}
+
+    monkeypatch.setattr(collect, "run_halfyear", fake_run_halfyear)
+
+    assert cli.main("halfyear", period="202601") == 0
+    assert calls["period"] == "202601"
+
+
+def test_main_halfyear_still_defaults_to_the_scheduled_period(tmp_path, monkeypatch):
+    """기간을 안 주면 예전 그대로 — 자동 실행의 동작은 바뀌지 않는다."""
+    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    monkeypatch.setenv("KOSIS_API_KEY", "test-key")
+    (tmp_path / "data").mkdir()
+    _freeze(monkeypatch, 2026, 9, 3)
+
+    calls = {}
+
+    def fake_run_halfyear(period, *, out_dir, api_key, collector=None,
+                          out_name=None, compare_names=None):
+        calls["period"] = period
+        return {out_name: 1}
+
+    monkeypatch.setattr(collect, "run_halfyear", fake_run_halfyear)
+
+    assert cli.main("halfyear") == 0
+    assert calls["period"] == "202602"
+
+
+def test_main_rejects_a_malformed_explicit_period(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    monkeypatch.setenv("KOSIS_API_KEY", "test-key")
+    (tmp_path / "data").mkdir()
+    with pytest.raises(SystemExit):
+        cli.main("halfyear", period="2026")

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from datetime import date
 from pathlib import Path
@@ -167,8 +168,29 @@ def _compare_names(out_dir: Path, *, source: str, field: str) -> set[str] | None
     return {row[field] for row in data.get("rows", []) if row.get(field)}
 
 
-def main(mode: str) -> int:
+_PERIOD_RE = re.compile(r"^\d{6}$")
+
+
+def main(mode: str, period: str | None = None) -> int:
+    """`period` 는 **수동 실행 전용** 기간 지정이다 (자동 실행은 안 준다).
+
+    실측(2026-09-03): `_halfyear_period()` 는 cron(6월 20일·12월 20일)에 맞춰
+    7~12월 실행이면 그 해 하반기(`YYYY02`)를 요청하는데, 하반기 조사는 12월경에야
+    공표된다. 그래서 9월에 첫 수집을 수동으로 돌리면 KOSIS 가 "데이터가 존재하지
+    않습니다"로 답한다(같은 시점에 `202601` 은 186행이 정상적으로 온다). 자동
+    실행의 동작은 그대로 두고, 사람이 돌릴 때만 기간을 고를 수 있게 한다.
+
+    monthly·series 는 지금 이 필요가 없어 배선하지 않았다 — 조용히 무시하는
+    대신 시끄럽게 거절한다(쓰이지 않는 경로를 만들어 두지 않는다).
+    """
     out_dir = ROOT / "data"
+
+    if period is not None:
+        if not _PERIOD_RE.match(period):
+            raise SystemExit(f"period 는 6자리여야 한다 (YYYYMM 또는 YYYY0H): {period!r}")
+        if mode != "halfyear":
+            raise SystemExit(
+                f"기간 지정은 halfyear 에서만 쓸 수 있다 (받은 모드: {mode!r}).")
 
     if mode == "monthly":
         cm = center_map.load(out_dir / "center_map.json")
@@ -214,7 +236,7 @@ def main(mode: str) -> int:
         except KeyError:
             raise SystemExit(
                 "KOSIS_API_KEY 환경변수가 없다 — GitHub Secret 또는 로컬 export 로 넣어라.")
-        period = _halfyear_period()
+        period = period or _halfyear_period()
         # C2 — KOSIS 표는 **둘**이다. 직종별(DT_118N_DEN062)과 산업별
         # (DT_118N_DEN061)을 각각 받아 다른 파일에 쓴다. 예전에는 여기서
         # run_halfyear 를 한 번만 불러 직종별로만 떨어졌고, 그래서
@@ -234,4 +256,5 @@ def main(mode: str) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1] if len(sys.argv) > 1 else ""))
+    raise SystemExit(main(sys.argv[1] if len(sys.argv) > 1 else "",
+                          sys.argv[2] if len(sys.argv) > 2 else None))
