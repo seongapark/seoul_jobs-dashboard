@@ -55,8 +55,13 @@ def test_parse_grid_row_count_matches_header_free_body():
 class _FakeLocator:
     """page.locator(...).first.evaluate(...) / .count() / .nth(i).click() 체인만 흉내낸다."""
 
-    def __init__(self, page: "_FakePage"):
+    def __init__(self, page: "_FakePage", selector: str = ""):
         self._page = page
+        self._selector = selector
+
+    def is_visible(self):
+        """이 가짜에는 로딩 오버레이가 없다 (스크롤 누적 경로 검증용 페이지다)."""
+        return False
 
     @property
     def first(self):
@@ -131,7 +136,7 @@ class _FakePage:
         pass
 
     def locator(self, selector):
-        return _FakeLocator(self)
+        return _FakeLocator(self, selector)
 
     def eval_on_selector_all(self, selector, js):
         """페이저 버튼의 라벨. 기본값은 '1'..'n' — 즉 전체 페이지가 다 보이는 상태.
@@ -523,7 +528,8 @@ class _FakePagedPage:
     그 성질을 _FakePagedNextAdvancesOnePage 가 따로 확인한다.)
     """
 
-    def __init__(self, pages, header=None, extra_labels=(), render_delay_polls=0):
+    def __init__(self, pages, header=None, extra_labels=(), render_delay_polls=0,
+                 overlay_polls_after_click=0):
         self.pages = pages
         self._header = header or ["지역", "값"]
         self._extra_labels = list(extra_labels)
@@ -535,6 +541,11 @@ class _FakePagedPage:
         self._render_delay_polls = render_delay_polls
         self._displayed = 1
         self._pending = 0
+        # 실측(2026-09-03): 페이지 클릭 뒤 로딩 오버레이(#progress_box)가 뜨고,
+        # 그동안 클릭은 가로채인다(Playwright 는 재시도하다 타임아웃). 정상이면
+        # 0.4~0.5초면 사라지지만 EIS 가 느려지면 30초를 넘긴다.
+        self._overlay_polls_after_click = overlay_polls_after_click
+        self._overlay_remaining = 0
 
     # --- 페이저 모델 -------------------------------------------------------
     def _labels(self):
@@ -545,6 +556,9 @@ class _FakePagedPage:
         return labels + self._extra_labels
 
     def _click_index(self, index):
+        if self._overlay_remaining > 0:
+            raise TimeoutError(
+                "타임아웃 (가짜): progress_back_panel 이 클릭을 가로챈다")
         label = self._labels()[index]
         self.clicked.append(label)
         if label.isdigit():
@@ -553,6 +567,7 @@ class _FakePagedPage:
             self._advance_window()
         if self.current != self._displayed:
             self._pending = self._render_delay_polls
+        self._overlay_remaining = self._overlay_polls_after_click
 
     def _advance_window(self):
         self.window_start = min(self.window_start + _WINDOW,
@@ -571,6 +586,13 @@ class _FakePagedPage:
     def close(self):
         pass
 
+    def overlay_is_visible(self):
+        """오버레이를 한 번 들여다본다 — 볼 때마다 걷히는 쪽으로 한 칸 간다."""
+        if self._overlay_remaining > 0:
+            self._overlay_remaining -= 1
+            return True
+        return False
+
     def eval_on_selector_all(self, selector, js):
         return self._labels()
 
@@ -582,7 +604,7 @@ class _FakePagedPage:
         return [self._header, *self.pages[self._displayed - 1]]
 
     def locator(self, selector):
-        return _FakePagedLocator(self)
+        return _FakePagedLocator(self, selector)
 
 
 class _FakePagedNextAdvancesOnePage(_FakePagedPage):
@@ -599,8 +621,9 @@ class _FakePagedNextAdvancesOnePage(_FakePagedPage):
 
 
 class _FakePagedLocator:
-    def __init__(self, page):
+    def __init__(self, page, selector: str = ""):
         self._page = page
+        self._selector = selector
 
     @property
     def first(self):
@@ -614,7 +637,12 @@ class _FakePagedLocator:
         self._page._click_index(self._index)
 
     def count(self):
+        if self._selector == olap._OVERLAY_SELECTOR:
+            return 1        # 실측: 오버레이 노드는 늘 DOM 에 있다
         return len(self._page._labels())
+
+    def is_visible(self):
+        return self._page.overlay_is_visible()
 
     def evaluate(self, js):
         self._page.scroll_calls += 1
@@ -846,3 +874,19 @@ def test_a_next_click_that_does_not_register_is_retried_before_failing():
 
     assert len(grid.rows) == 13 * olap._PAGE_SIZE + 17
     assert page.clicked.count("다음") >= 2
+
+
+def test_the_walk_waits_out_the_loading_overlay_instead_of_clicking_into_it():
+    """실측(2026-09-03, insured): 페이지 클릭 뒤 로딩 오버레이(#progress_box)가 뜨고,
+    그동안 페이저 클릭은 `progress_back_panel ... intercepts pointer events` 로
+    가로채인다. 정상이면 0.4~0.5초면 걷히지만 EIS 가 느려지면 30초를 넘겨,
+    다섯 번째 실측 수집이 42분을 걷고도 그 자리에서 죽었다.
+
+    Playwright 의 클릭 재시도에 기대는 대신, 오버레이가 걷힐 때까지 기다린 뒤
+    누른다 — `_requery` 가 '작업 취소' 스피너를 기다리는 것과 같은 방식이다.
+    """
+    page = _FakePagedPage(_pages(14), overlay_polls_after_click=3)
+
+    grid = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+
+    assert len(grid.rows) == 13 * olap._PAGE_SIZE + 17

@@ -162,6 +162,16 @@ _PAGE_RENDER_MAX_POLLS = 75      # 최대 30초
 # 실패는 여전히 시끄럽다.
 _PAGE_CLICK_ATTEMPTS = 2
 
+# 페이지를 넘기면 로딩 오버레이가 뜨고, 그동안 페이저 클릭은 가로채인다
+# (`progress_back_panel ... intercepts pointer events`). 실측(2026-09-03):
+# `#progress_box` 는 늘 DOM 에 있고 `display:none` 으로 토글되며, 정상이면
+# 0.4~0.5초면 걷힌다. EIS 가 느려지면 30초를 넘겨 Playwright 의 클릭 재시도가
+# 먼저 타임아웃한다 — 다섯 번째 실측 수집이 42분을 걷고도 그렇게 죽었다.
+# 그래서 클릭 재시도에 기대는 대신 **걷힐 때까지 기다린 뒤** 누른다
+# (layout._requery 가 '작업 취소' 스피너를 기다리는 것과 같은 방식).
+_OVERLAY_SELECTOR = "#progress_box"
+_OVERLAY_MAX_POLLS = 150         # 최대 60초
+
 # ---------------------------------------------------------------------------
 # R47 (Task 15a 실측, 2026-09-02) — 페이저는 "전체 페이지 목록"이 아니라 **창**이다.
 #
@@ -201,7 +211,30 @@ def _check_pager_labels(labels) -> None:
             f"아는 것은 숫자 버튼과 {sorted(_PAGER_NAV_LABELS)} 뿐이다.")
 
 
+def _overlay_visible(page) -> bool:
+    """로딩 오버레이가 화면을 덮고 있는가.
+
+    실측(2026-09-03): `#progress_box` 는 **늘 DOM 에 있고** `display:none` 으로
+    토글된다 — 그래서 존재가 아니라 **가시성**을 본다(layout.py 의 '작업 취소'
+    스피너와 같은 함정이다: 존재로 판단하면 영원히 "떠 있다"가 된다).
+    """
+    locator = page.locator(_OVERLAY_SELECTOR)
+    return locator.count() > 0 and locator.first.is_visible()
+
+
+def _wait_out_overlay(page) -> None:
+    for _ in range(_OVERLAY_MAX_POLLS):
+        if not _overlay_visible(page):
+            return
+        page.wait_for_timeout(_PAGE_RENDER_POLL_MS)
+    raise OlapPageWalkError(
+        f"로딩 오버레이({_OVERLAY_SELECTOR})가 "
+        f"{_OVERLAY_MAX_POLLS * _PAGE_RENDER_POLL_MS // 1000}초 안에 안 걷힌다 — "
+        "클릭이 가로채이므로 잘렸을 수 있는 그리드를 반환하지 않는다.")
+
+
 def _click_pager_label(page, label: str) -> None:
+    _wait_out_overlay(page)
     labels = _pager_labels(page)
     try:
         index = labels.index(label)
