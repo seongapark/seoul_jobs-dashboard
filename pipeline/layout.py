@@ -18,8 +18,9 @@ DevExtreme 이 아니라 EIS 가 자체 제작한 jQuery-UI 위젯("WISE", 클�
     리포트마다 다르기 때문이다.
   - 필드의 `uni_nm` 속성값("(근무지역)시군구" 등)이 바뀌면 → `_drag` 가
     `LayoutError("필드를 못 찾는다")` 를 낸다. 재조회는 하지 않는다.
-  - 드래그 자체가 먹지 않으면(HTML5 DnD 동작 변경 등) → 재조회 **전에**
-    행 영역의 `uni_nm` 목록을 읽어 요청과 대조하므로 `LayoutError` 가 난다.
+  - 드래그 자체가 먹지 않으면(마우스 단계 수·드롭 좌표 등) → 재조회 **전에**
+    행 영역의 `uni_nm` 목록을 읽어 요청과 대조하므로 `LayoutError` 가 난다
+    (그 전에 `PLACE_ATTEMPTS` 만큼 비우고 다시 놓아 본다).
   - 재조회(돋보기) 좌표 클릭이 빗나가면 → 렌더된 그리드의 행 축 설명 셀
     (`.dx-area-description-cell`)이 옛 축 그대로라 `LayoutError` 가 난다.
   - 뷰포트 폭이 실측값(1280)과 다르면 → 좌표 클릭이 애초에 의미가 없으므로
@@ -70,6 +71,15 @@ DROP_AT_TOP = {"x": 20, "y": 4}
 # 보호와 같은 이유·같은 모양이다: 영역을 비우고 다시 놓아 본 뒤, 그래도 안
 # 들어가면 그때 실패한다(요청과 다른 축으로는 절대 조회하지 않는다).
 PLACE_ATTEMPTS = 2
+
+# 드래그는 Playwright 의 `drag_to` 가 아니라 **마우스를 여러 단계로 옮겨** 한다.
+# 실측(2026-09-03, 피보험자 시군구+직종): `drag_to` 는 3/3 실패하고 단계 드래그는
+# 3/3 성공했다 — 일시적 실패가 아니라 결정적이다. WISE 는 jQuery-UI 계열이라
+# 삽입 위치를 `dragover` 로 계산하는데, `drag_to` 는 중간 mousemove 를 충분히
+# 보내지 않아 **항목이 이미 있는 영역**에서 조용히 아무 일도 일어나지 않는다
+# (빈 영역에는 어느 방식이든 들어가서, 첫 필드만 놓는 데이터셋에서는 안 드러났다).
+DRAG_STEPS = 10
+DRAG_STEP_MS = 40
 AREA_ITEMS_JS = "els => els.map(e => e.getAttribute('uni_nm'))"
 DESC_TEXT_JS = "els => els.map(e => e.innerText.trim())"
 
@@ -127,7 +137,21 @@ def _drag(page, field: str, area: str) -> None:
             f"필드 '{field}' 를 좌측 분석항목 목록에서 못 찾는다 — uni_nm 속성값이 "
             f"바뀌었을 수 있다 (셀렉터: {selector})")
     source.first.scroll_into_view_if_needed()
-    source.first.drag_to(page.locator(area), target_position=DROP_AT_TOP)
+    src = source.first.bounding_box()
+    dst = page.locator(area).bounding_box()
+    if not src or not dst:
+        raise LayoutError(
+            f"'{field}' 또는 {area} 의 화면 상자를 못 읽는다 — 좌표 드래그를 할 수 없다.")
+
+    start_x, start_y = src["x"] + src["width"] / 2, src["y"] + src["height"] / 2
+    end_x, end_y = dst["x"] + DROP_AT_TOP["x"], dst["y"] + DROP_AT_TOP["y"]
+    page.mouse.move(start_x, start_y)
+    page.mouse.down()
+    for step in range(1, DRAG_STEPS + 1):
+        page.mouse.move(start_x + (end_x - start_x) * step / DRAG_STEPS,
+                        start_y + (end_y - start_y) * step / DRAG_STEPS)
+        page.wait_for_timeout(DRAG_STEP_MS)
+    page.mouse.up()
     page.wait_for_timeout(DRAG_WAIT_MS)
 
 

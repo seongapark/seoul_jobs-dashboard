@@ -26,20 +26,8 @@ class _FakeLocator:
     def scroll_into_view_if_needed(self):
         self._page.calls.append(("scroll", self._selector))
 
-    def drag_to(self, target, target_position=None):
-        self._page.calls.append(("drag", self._selector, target._selector, target_position))
-        # 실측(2026-09-03, 경력직이동 3축 + 유효구인구직 1·2축): 영역 **상단**에
-        # 떨어뜨리면 드래그한 순서 그대로 쌓인다. 중앙에 떨어뜨리면 항목이 둘일 때
-        # 가운데로 끼어들어 3축에서 순서가 어긋난다 — 그래서 상단 드롭을 요구한다.
-        if target_position != layout.DROP_AT_TOP:
-            raise AssertionError(
-                f"영역 중앙 드롭은 순서를 보장하지 않는다 (target_position={target_position})")
-        field = _field_of(self._selector)
-        # 실측(2026-09-03, 피보험자): 드래그가 이따금 아예 안 먹는다.
-        if self._page.drops_to_ignore.get(field, 0) > 0:
-            self._page.drops_to_ignore[field] -= 1
-            return
-        self._page.dragged[target._selector].append(field)
+    def bounding_box(self):
+        return self._page.box_of(self._selector)
 
 
 class _BusyLocator:
@@ -89,6 +77,64 @@ class _FakePage:
         self.field_counts = field_counts or {}
         self.viewport_size = {"width": viewport_width, "height": 720}
         self._busy_forever = busy_forever
+        # 실제 화면 배치를 흉내낸다: 좌측 목록의 필드들은 왼쪽 세로로, 영역들은
+        # 오른쪽에. 드롭이 어느 영역에 떨어졌는지 좌표로 판정하기 위해서다.
+        self._field_order = ["(근무지역)시군구", "(사업장)시군구", "(지역별)시도",
+                             "(근무지역)시도", "(사업장)시도", "직종_중분류",
+                             "산업_대분류", "산업(이전)_대분류", "마감년월"]
+        self.mouse_pos = (0, 0)
+        self.button_down = False
+        self.moves_while_down = 0
+        self._drag_from = None
+
+    def box_of(self, selector):
+        """셀렉터의 화면 상자. 필드는 왼쪽 세로 목록, 영역은 오른쪽."""
+        if selector.startswith("li[uni_nm="):
+            field = _field_of(selector)
+            index = (self._field_order.index(field)
+                     if field in self._field_order else len(self._field_order))
+            return {"x": 10, "y": 40 + index * 30, "width": 200, "height": 26}
+        if selector == self.row_area:
+            return {"x": 400, "y": 100, "width": 245, "height": 54}
+        if selector == self.col_area:
+            return {"x": 400, "y": 200, "width": 245, "height": 54}
+        raise AssertionError(f"상자를 모르는 셀렉터: {selector}")
+
+    def _area_at(self, x, y):
+        for area in (self.row_area, self.col_area):
+            box = self.box_of(area)
+            if box["x"] <= x <= box["x"] + box["width"]                     and box["y"] <= y <= box["y"] + box["height"]:
+                return area
+        return None
+
+    def _field_at(self, x, y):
+        for field in self._field_order:
+            box = self.box_of(f'li[uni_nm="{field}"][prev-container="allList"]')
+            if box["x"] <= x <= box["x"] + box["width"]                     and box["y"] <= y <= box["y"] + box["height"]:
+                return field
+        return None
+
+    def _drop(self):
+        """마우스를 뗀 자리에서 드롭을 판정한다.
+
+        실측(2026-09-03, 피보험자): 항목이 이미 있는 영역에는 **중간 mousemove 가
+        충분히 있어야만** 들어간다. Playwright 의 `drag_to` 처럼 한 번에 건너뛰면
+        위젯이 dragover 를 못 받아 조용히 아무 일도 안 일어난다(drag_to 3/3 실패,
+        단계 드래그 3/3 성공). 그 성질을 여기서 그대로 요구한다.
+        """
+        if self._drag_from is None:
+            return
+        field, self._drag_from = self._field_at(*self._drag_from), None
+        area = self._area_at(*self.mouse_pos)
+        if field is None or area is None:
+            return
+        if self.moves_while_down < layout.DRAG_STEPS:
+            return                      # 단계가 모자라면 위젯이 못 받는다
+        if self.drops_to_ignore.get(field, 0) > 0:
+            self.drops_to_ignore[field] -= 1
+            return
+        self.calls.append(("drag", field, area))
+        self.dragged[area].append(field)
 
     def click(self, selector):
         self.calls.append(("click", selector))
@@ -139,6 +185,20 @@ class _FakePage:
         def __init__(self, page):
             self._page = page
 
+        def move(self, x, y):
+            self._page.mouse_pos = (x, y)
+            if self._page.button_down:
+                self._page.moves_while_down += 1
+
+        def down(self):
+            self._page.button_down = True
+            self._page.moves_while_down = 0
+            self._page._drag_from = self._page.mouse_pos
+
+        def up(self):
+            self._page.button_down = False
+            self._page._drop()
+
         def click(self, x, y):
             self._page.calls.append(("requery", x, y))
 
@@ -166,7 +226,7 @@ def test_fields_are_dragged_in_the_requested_outer_to_inner_order():
     깨졌다 — 요청 [시도, 산업, 산업(이전)] 이 [산업, 시도, 산업(이전)] 이 됐다."""
     page = _FakePage()
     layout.set_layout(page, rows=["(근무지역)시군구", "직종_중분류"])
-    dragged = [_field_of(c[1]) for c in page.calls if c[0] == "drag"]
+    dragged = [c[1] for c in page.calls if c[0] == "drag"]
     assert dragged == ["(근무지역)시군구", "직종_중분류"]
 
 
