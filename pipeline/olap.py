@@ -98,6 +98,10 @@ from typing import NamedTuple
 _PAGE_SIZE = 50
 _PAGER_CONTAINER_SELECTOR = ".dx-datagrid-pager"
 _PAGER_SELECTOR = f"{_PAGER_CONTAINER_SELECTOR} .dx-page"
+# 지금 보고 있는 페이지에는 `dx-selection` 이 붙는다 (실측 2026-09-03: '다음' 을
+# 누르면 선택이 새 창의 첫 번호로 함께 옮겨간다). 이걸 봐야 "클릭이 안 먹었다"와
+# "먹었는데 렌더가 느리다"를 가를 수 있다.
+_PAGER_SELECTED_SELECTOR = f"{_PAGER_SELECTOR}.dx-selection"
 # 페이저가 진짜 있으면 보통 이 안에 뜬다. 없으면 이 시간을 다 기다린 뒤에야
 # "없다"고 판단한다 — 고정 500ms 대기보다 느릴 수 있지만, 늦게 뜨는 페이저를
 # "없다"고 오판해 조용히 첫 페이지만 반환하는 쪽보다 안전 쪽으로 실패한다.
@@ -288,6 +292,14 @@ def _check_walk_completeness(page, visited: int, page_count: int) -> None:
             f"멈췄다 (총 {page_count}페이지 읽음). 잘렸을 수 있는 그리드를 반환하지 않는다.")
 
 
+def _selected_page(page):
+    """페이저가 표시하는 현재 페이지 번호. 못 읽으면 None."""
+    labels = [text.strip() for text in
+              page.eval_on_selector_all(_PAGER_SELECTED_SELECTOR, "els => els.map(e => e.innerText)")]
+    numbers = [int(text) for text in labels if text.isdigit()]
+    return numbers[0] if numbers else None
+
+
 def _next_page_number(labels, visited: int):
     """창 안에서 아직 안 걸은 가장 작은 페이지 번호. 없으면 None."""
     larger = [int(text) for text in labels if text.isdigit() and int(text) > visited]
@@ -476,10 +488,18 @@ def _walk_paginated_grid(
                 f"페이지를 {_MAX_PAGES}개까지 걸었는데도 끝이 안 난다 — 페이저가 "
                 "제자리를 도는 것으로 보고 잘렸을 수 있는 결과를 반환하지 않는다.")
 
+        # 실측(2026-09-03, insured 656페이지): 렌더가 예산을 넘기는 페이지가
+        # 이따금 있다. 그때 같은 번호를 **다시 누르면** 이미 그 페이지라 아무
+        # 일도 일어나지 않아 재시도가 오히려 실패를 확정한다. 그래서 다시 누르기
+        # 전에 페이저가 표시하는 현재 페이지를 본다 — 이미 목표 페이지면 클릭은
+        # 먹은 것이고 느릴 뿐이므로, 누르지 말고 더 기다린다.
         body = prev_body
-        for _ in range(_PAGE_CLICK_ATTEMPTS):
-            _click_pager_label(page, str(page_number))
-            body = _body_after_render(page, prev_body)
+        for attempt in range(_PAGE_CLICK_ATTEMPTS):
+            if attempt and _selected_page(page) == page_number:
+                body = _body_after_render(page, prev_body)
+            else:
+                _click_pager_label(page, str(page_number))
+                body = _body_after_render(page, prev_body)
             if body and body != prev_body:
                 break
 

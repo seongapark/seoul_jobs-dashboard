@@ -594,6 +594,8 @@ class _FakePagedPage:
         return False
 
     def eval_on_selector_all(self, selector, js):
+        if selector == olap._PAGER_SELECTED_SELECTOR:
+            return [str(self.current)]
         return self._labels()
 
     def evaluate(self, js):
@@ -734,9 +736,16 @@ def test_walk_waits_for_the_grid_to_actually_rerender():
 
 
 def test_walk_still_fails_when_the_page_never_rerenders():
-    """폴링 예산을 다 써도 안 바뀌면 예외 — 같은 페이지를 두 번 담지 않는다."""
+    """폴링 예산을 **다 써도** 안 바뀌면 예외 — 같은 페이지를 두 번 담지 않는다.
+
+    예산은 시도마다 한 번씩이다(느린 렌더는 다시 누르지 않고 한 번 더 기다린다 —
+    `test_a_slow_render_is_waited_out_instead_of_clicking_the_same_page_again`).
+    그래서 "끝내 안 바뀐다"를 흉내내려면 모든 시도의 예산을 합친 것보다 커야 한다.
+    """
     pages = _pages(12)
-    page = _FakePagedPage(pages, render_delay_polls=olap._PAGE_RENDER_MAX_POLLS + 5)
+    page = _FakePagedPage(
+        pages,
+        render_delay_polls=olap._PAGE_RENDER_MAX_POLLS * olap._PAGE_CLICK_ATTEMPTS + 5)
 
     with pytest.raises(olap.OlapPageWalkError):
         olap.fetch_grid("http://fake", page=page, max_scrolls=10)
@@ -932,3 +941,21 @@ def test_a_repeated_leaf_row_with_the_same_industry_twice_still_fails():
 
     with pytest.raises(olap.OlapPageWalkError):
         olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+
+
+def test_a_slow_render_is_waited_out_instead_of_clicking_the_same_page_again():
+    """실측(2026-09-03, insured 656페이지): 한 페이지의 렌더가 예산(30초)을 넘기면
+    걷기가 죽는다 — 일곱 번째 수집이 423페이지에서 그렇게 끝났다(여섯 번째는 같은
+    데이터셋 656페이지를 완주했으니 일시적이다).
+
+    그런데 여기엔 함정이 있다: 렌더가 느렸을 뿐이면 **클릭은 이미 먹었고**, 같은
+    페이지를 다시 누르면 이미 그 페이지라 아무 일도 일어나지 않아 재시도가 오히려
+    실패를 확정한다. 페이저의 선택 표시로 "클릭이 안 먹었다"와 "먹었는데 느리다"를
+    갈라, 후자면 다시 누르지 말고 더 기다린다.
+    """
+    page = _FakePagedPage(_pages(3), render_delay_polls=olap._PAGE_RENDER_MAX_POLLS + 5)
+
+    grid = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+
+    assert len(grid.rows) == 2 * olap._PAGE_SIZE + 17
+    assert page.clicked.count("2") == 1      # 느릴 뿐인데 다시 누르지 않았다

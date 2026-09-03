@@ -426,3 +426,21 @@ def test_sido_file_missing_a_metro_sido_fails(tmp_path):
     with pytest.raises(checks.CheckFailed) as e:
         collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=CM)
     assert "28" in str(e.value)
+
+
+def test_run_monthly_logs_each_dataset_as_it_goes(tmp_path):
+    """46분짜리 수집이 익명으로 죽으면 안 된다.
+
+    실측(2026-09-03): 일곱 번째 수집이 "423페이지로 이동을 시도했지만…"으로
+    죽었는데 **어느 데이터셋인지 로그에 없어서**, 데이터셋별 페이지 수를 따로
+    재고 나서야 `insured`(656페이지)임을 알 수 있었다. 진행 로그가 있으면
+    실패 지점이 곧바로 드러나고, GitHub Actions 로그에서도 어디까지 갔는지 보인다.
+    """
+    lines = []
+    rows = [{"sido": code, "movers": 1} for code in collect.METRO_SIDO_CODES]
+    fetchers = {"mobility": lambda period: collect.Fetched(rows, None, None)}
+
+    collect.run_monthly("202607", out_dir=tmp_path, fetchers=fetchers, cm=None,
+                        previous=None, log=lines.append)
+
+    assert any("mobility" in line for line in lines)

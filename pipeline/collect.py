@@ -161,8 +161,17 @@ def _effective_expected_codes(rows, cm):
     return expected
 
 
-def run_monthly(period, *, out_dir, fetchers, cm, previous=None):
-    collected: dict[str, Fetched] = {name: fetch(period) for name, fetch in fetchers.items()}
+def run_monthly(period, *, out_dir, fetchers, cm, previous=None, log=print):
+    # 데이터셋 하나가 수백 페이지짜리라 이 함수는 한 번에 45분 넘게 돈다. 어디까지
+    # 갔는지 남기지 않으면 실패가 익명이 된다 — 실측(2026-09-03): 일곱 번째 수집이
+    # "423페이지로 이동을 시도했지만…"으로 죽었는데 어느 데이터셋인지 로그에 없어,
+    # 데이터셋별 페이지 수를 따로 재고 나서야 insured(656페이지)임을 알 수 있었다.
+    collected: dict[str, Fetched] = {}
+    for index, (name, fetch) in enumerate(fetchers.items(), start=1):
+        log(f"monthly({period}) [{index}/{len(fetchers)}] {name} 수집 시작")
+        fetched = fetch(period)
+        collected[name] = fetched
+        log(f"monthly({period}) [{index}/{len(fetchers)}] {name} {len(fetched.rows)}행")
 
     for name, fetched in collected.items():
         rows = fetched.rows
