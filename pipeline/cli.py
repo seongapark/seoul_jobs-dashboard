@@ -185,6 +185,11 @@ def main(mode: str, period: str | None = None) -> int:
     """
     out_dir = ROOT / "data"
 
+    # `workflow_dispatch` 의 선택 입력은 비워 두면 **빈 문자열**로 온다 —
+    # "안 준 것"과 같게 다룬다. 안 그러면 기간 없이 돌리려는 정상적인 수동
+    # 실행이 6자리 검사에 걸려 죽는다.
+    period = period or None
+
     if period is not None:
         if not _PERIOD_RE.match(period):
             raise SystemExit(f"period 는 6자리여야 한다 (YYYYMM 또는 YYYY0H): {period!r}")

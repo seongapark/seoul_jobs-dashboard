@@ -8,6 +8,11 @@ on:
   schedule:
     - cron: "0 1 20 6,12 *"
   workflow_dispatch:
+    inputs:
+      period:
+        description: "반기 (YYYY01=상반기 · YYYY02=하반기). 비우면 실행 월로 정한다."
+        required: false
+        type: string
 
 # collect-monthly.yml 과 같은 이유 — 커밋 단계가 git push 를 한다. 기본
 # GITHUB_TOKEN 이 읽기 전용이면 매번 실패한다.
@@ -25,7 +30,12 @@ jobs:
           python-version: "3.11"
       - run: pip install -r requirements.txt
 
-      - run: python -m pipeline.cli halfyear
+      # 기간을 비우면 실행 월로 정한다(1~6월 → YYYY01, 7~12월 → YYYY02). 그
+      # 기본값은 이 워크플로의 6월 20일·12월 20일 cron 에 맞춘 것이라, **그 밖의
+      # 시점에 수동으로 돌리면 아직 공표되지 않은 반기를 요청할 수 있다**
+      # (실측 2026-09-03: 202602 는 "데이터가 존재하지 않습니다", 202601 은 정상).
+      # 그럴 때 위 입력에 기간을 직접 넣는다.
+      - run: python -m pipeline.cli halfyear ${{ inputs.period }}
         env:
           KOSIS_API_KEY: ${{ secrets.KOSIS_API_KEY }}
 

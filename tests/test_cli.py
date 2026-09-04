@@ -426,3 +426,28 @@ def test_main_rejects_a_malformed_explicit_period(tmp_path, monkeypatch):
     (tmp_path / "data").mkdir()
     with pytest.raises(SystemExit):
         cli.main("halfyear", period="2026")
+
+
+def test_an_empty_period_argument_means_no_period(tmp_path, monkeypatch):
+    """워크플로 입력이 비어 오면 '기간을 안 준 것'으로 본다.
+
+    `workflow_dispatch` 의 선택 입력은 비워 두면 빈 문자열로 온다. 그걸 그대로
+    넘기면 6자리 검사에 걸려 `SystemExit` 이 나서, 기간을 안 주고 자동 기본값을
+    쓰려는 정상적인 수동 실행이 죽는다.
+    """
+    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    monkeypatch.setenv("KOSIS_API_KEY", "test-key")
+    (tmp_path / "data").mkdir()
+    _freeze(monkeypatch, 2026, 9, 3)
+
+    calls = {}
+
+    def fake_run_halfyear(period, *, out_dir, api_key, collector=None,
+                          out_name=None, compare_names=None):
+        calls["period"] = period
+        return {out_name: 1}
+
+    monkeypatch.setattr(collect, "run_halfyear", fake_run_halfyear)
+
+    assert cli.main("halfyear", period="") == 0
+    assert calls["period"] == "202602"        # 기본값(그 달 기준)으로 돌아간다
