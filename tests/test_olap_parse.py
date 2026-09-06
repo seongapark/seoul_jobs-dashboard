@@ -747,7 +747,8 @@ def test_walk_still_fails_when_the_page_never_rerenders():
     pages = _pages(12)
     page = _FakePagedPage(
         pages,
-        render_delay_polls=olap._PAGE_RENDER_MAX_POLLS * olap._PAGE_CLICK_ATTEMPTS + 5)
+        render_delay_polls=(olap._PAGE_RENDER_MAX_POLLS
+                            + olap._SLOW_RENDER_MAX_POLLS * olap._PAGE_CLICK_ATTEMPTS + 5))
 
     with pytest.raises(olap.OlapPageWalkError):
         olap.fetch_grid("http://fake", page=page, max_scrolls=10)
@@ -980,3 +981,22 @@ def test_the_page_is_opened_with_the_korean_ui_locale():
 
     assert browser.new_page_kwargs == {"locale": olap.UI_LOCALE}
     assert olap.UI_LOCALE == "ko-KR"
+
+
+def test_a_confirmed_page_is_waited_out_with_a_much_larger_budget():
+    """실측(2026-09-06, GitHub Actions 러너): insured(656페이지)의 253페이지에서
+    "렌더된 행이 이전 페이지와 똑같다"로 죽었다. 러너는 EIS 까지 더 느려 60초
+    예산(30초 x 2)을 넘긴다.
+
+    **페이저가 "이미 목표 페이지"라고 확인해 준 뒤에는 더 기다리는 데 정확성
+    위험이 없다** — 작은 예산을 둔 이유(낡은 렌더를 새 페이지로 오인)가 그때는
+    사라진다. 그래서 그 경우에만 예산을 크게 준다. 확인이 안 되면(클릭이 안
+    먹은 경우) 예산은 그대로다.
+    """
+    page = _FakePagedPage(_pages(3),
+                          render_delay_polls=olap._PAGE_RENDER_MAX_POLLS * 2 + 5)
+
+    grid = olap.fetch_grid("http://fake", page=page, max_scrolls=10)
+
+    assert len(grid.rows) == 2 * olap._PAGE_SIZE + 17
+    assert page.clicked.count("2") == 1      # 다시 누르지 않고 기다렸다

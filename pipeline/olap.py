@@ -160,6 +160,11 @@ _PAGE_ADVANCE_WAIT_MS = 400
 # 낸다(그 판정은 그대로 둔다 — 조용히 같은 페이지를 두 번 담지 않는다).
 _PAGE_RENDER_POLL_MS = 400
 _PAGE_RENDER_MAX_POLLS = 75      # 최대 30초
+# 페이저가 "이미 목표 페이지"라고 확인해 준 뒤에 쓰는 예산. 그때는 작은 예산을
+# 둔 이유(낡은 렌더를 새 페이지로 오인)가 사라지므로 넉넉히 기다려도 정확성
+# 위험이 없다. 실측(2026-09-06, GitHub Actions 러너): insured(656페이지)의
+# 253페이지에서 60초(30초x2) 예산을 넘겨 죽었다 — 러너는 EIS 까지 더 느리다.
+_SLOW_RENDER_MAX_POLLS = 450     # 최대 3분
 # 200페이지짜리 걷기에서는 클릭 하나가 이따금 먹지 않는다(실측: 151페이지까지
 # 잘 가다가 152페이지에서 렌더가 안 바뀜). 한 번은 다시 눌러 본다 — 그래도
 # 안 바뀌면 예외다. "여러 번 누르다 보면 되겠지"가 아니라 **딱 한 번 더**이고,
@@ -316,14 +321,14 @@ def _next_page_number(labels, visited: int):
     return min(larger) if larger else None
 
 
-def _body_after_render(page, prev_body):
+def _body_after_render(page, prev_body, max_polls=None):
     """페이지 클릭 뒤 본문이 실제로 바뀔 때까지 기다렸다가 돌려준다.
 
     끝내 안 바뀌면 prev_body 를 그대로 돌려준다 — 호출부가 "페이지가 안
     넘어갔다"로 보고 예외를 낸다.
     """
     body = prev_body
-    for _ in range(_PAGE_RENDER_MAX_POLLS):
+    for _ in range(max_polls or _PAGE_RENDER_MAX_POLLS):
         page.wait_for_timeout(_PAGE_RENDER_POLL_MS)
         _, *body = page.evaluate(_EXTRACT_JS)
         if body and body != prev_body:
@@ -517,7 +522,9 @@ def _walk_paginated_grid(
         body = prev_body
         for attempt in range(_PAGE_CLICK_ATTEMPTS):
             if attempt and _selected_page(page) == page_number:
-                body = _body_after_render(page, prev_body)
+                # 클릭은 먹었고 렌더가 느릴 뿐이다 — 넉넉한 예산으로 기다린다.
+                body = _body_after_render(page, prev_body,
+                                          max_polls=_SLOW_RENDER_MAX_POLLS)
             else:
                 _click_pager_label(page, str(page_number))
                 body = _body_after_render(page, prev_body)
