@@ -173,6 +173,16 @@ _PAGE_CLICK_ATTEMPTS = 2
 # 먼저 타임아웃한다 — 다섯 번째 실측 수집이 42분을 걷고도 그렇게 죽었다.
 # 그래서 클릭 재시도에 기대는 대신 **걷힐 때까지 기다린 뒤** 누른다
 # (layout._requery 가 '작업 취소' 스피너를 기다리는 것과 같은 방식).
+# 뷰어를 **한국어 UI 로** 연다. 실측(2026-09-05, GitHub Actions 러너): 러너의
+# 기본 로케일(en-US)에서는 DevExtreme 이 UI 라벨을 번역해 총계 행이
+# `['Grand Total', 'Grand Total', …]` 로 온다 — 첫 자동 월간 수집이 그래서
+# 죽었다. 로케일을 바꿔 재현했다: en-US → 'Grand Total', ko-KR → '총계'
+# (데이터 값은 한국어 그대로고 UI 라벨만 번역된다). 이 파이프라인의 라벨
+# 규칙(`_SUMMARY_ROW_LABELS`, `_SUMMARY_ROW_SUFFIX`, fetchers 의 `' 전체'`,
+# `TOTAL_LABELS`)은 전부 한국어 UI 기준으로 실측된 것이므로, 러너의 로케일에
+# 정확성이 달려 있게 두지 않는다.
+UI_LOCALE = "ko-KR"
+
 _OVERLAY_SELECTOR = "#progress_box"
 _OVERLAY_MAX_POLLS = 150         # 최대 60초
 
@@ -841,7 +851,7 @@ def fetch_and_parse_grid(url: str, *, browser, max_scrolls: int = 200,
     파싱해 `.summaries` 로 그대로 넘긴다 — 조용히 버리지 않는다). `parse_grid`
     자체의 시그니처(list[list[str]] -> list[dict], R2)는 그대로다.
     """
-    page = browser.new_page()
+    page = browser.new_page(locale=UI_LOCALE)
     try:
         grid = fetch_grid(url, page=page, max_scrolls=max_scrolls, after_load=after_load)
     finally:

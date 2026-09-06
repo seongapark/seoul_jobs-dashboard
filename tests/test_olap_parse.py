@@ -167,8 +167,10 @@ class _FakeBrowser:
 
     def __init__(self, page: "_FakePage"):
         self._page = page
+        self.new_page_kwargs = None
 
-    def new_page(self):
+    def new_page(self, **kwargs):
+        self.new_page_kwargs = kwargs
         return self._page
 
 
@@ -959,3 +961,22 @@ def test_a_slow_render_is_waited_out_instead_of_clicking_the_same_page_again():
 
     assert len(grid.rows) == 2 * olap._PAGE_SIZE + 17
     assert page.clicked.count("2") == 1      # 느릴 뿐인데 다시 누르지 않았다
+
+
+def test_the_page_is_opened_with_the_korean_ui_locale():
+    """실측(2026-09-05, GitHub Actions 러너): 러너에서 월간 수집이 죽었다 —
+    총계 행이 `['Grand Total', 'Grand Total', …]` 로 왔다.
+
+    로컬(ko)에서는 `'총계'` 다. 로케일을 바꿔 재현했다: en-US → 'Grand Total',
+    ko-KR → '총계'. 데이터 값(지역무관·서울)은 한국어 그대로고 **DevExtreme 의
+    UI 라벨만** 번역된다. 이 파이프라인의 라벨 규칙(`총계`, `' 전체'` 접미)은
+    전부 한국어 UI 기준으로 실측된 것이므로, 페이지를 한국어로 연다 —
+    러너의 로케일에 파이프라인의 정확성이 달려 있게 두지 않는다.
+    """
+    page = _FakePage(windows=[[["서울", "10"]]])
+    browser = _FakeBrowser(page)
+
+    olap.fetch_and_parse_grid("http://fake", browser=browser, max_scrolls=5)
+
+    assert browser.new_page_kwargs == {"locale": olap.UI_LOCALE}
+    assert olap.UI_LOCALE == "ko-KR"
